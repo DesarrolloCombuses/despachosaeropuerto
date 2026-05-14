@@ -1,0 +1,41 @@
+{
+    "name": "Llegadas Aeropuerto JMC",
+    "short_name": "Llegadas JMC",
+    "description": "Monitoreo en tiempo real de llegadas y despachos al Aeropuerto JMC - Combuses",
+    "lang": "es-CO",
+    "dir": "ltr",
+    "start_url": "./aplicacion-aeropuerto.html",
+    "scope": "./",
+    "display": "standalone",
+    "display_override": ["standalone", "minimal-ui"],
+    "orientation": "any",
+    "theme_color": "#4f46e5",
+    "background_color": "#ffffff",
+    "categories": ["business", "productivity", "travel"],
+    "icons": [
+        {
+            "src": "icons/favicon.svg",
+            "type": "image/svg+xml",
+            "sizes": "any",
+            "purpose": "any"
+        },
+        {
+            "src": "icons/icon-192.png",
+            "type": "image/png",
+            "sizes": "192x192",
+            "purpose": "any"
+        },
+        {
+            "src": "icons/icon-512.png",
+            "type": "image/png",
+            "sizes": "512x512",
+            "purpose": "any"
+        },
+        {
+            "src": "icons/icon-maskable-512.png",
+            "type": "image/png",
+            "sizes": "512x512",
+            "purpose": "maskable"
+        }
+    ]
+}
