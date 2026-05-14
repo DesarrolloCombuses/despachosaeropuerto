@@ -270,7 +270,7 @@
                 const estadoCls = r.listo ? "listo" : "espera";
                 const estadoTxt = r.listo ? "LISTO" : "ESPERA";
                 return `
-                    <tr data-vehicle-id="${escapeHtml(r.vehicle_id || "")}">
+                    <tr class="bus-row" data-vehicle-id="${escapeHtml(r.vehicle_id || "")}" tabindex="0" role="button" aria-label="Asignar itinerario al bus ${escapeHtml(r.interno || "")}">
                         <td class="pos">${r.posicion ?? "-"}</td>
                         <td class="hora">${escapeHtml(formatHora(r.hora_llegada))}</td>
                         <td class="hace">${escapeHtml(hace)}</td>
@@ -310,11 +310,21 @@
             `;
         }).join("");
 
-        tablaBox.querySelectorAll('[data-action="assign"]').forEach(function (btn) {
-            btn.addEventListener("click", function () {
-                const vid = btn.getAttribute("data-vehicle-id");
-                const row = rows.find(function (r) { return r.vehicle_id === vid; });
-                if (row) openAssignModal(row);
+        // Click/tap en cualquier parte de la fila abre el modal de asignar.
+        // Esto resuelve móviles donde la columna del botón está oculta.
+        function abrirDesdeFila(tr) {
+            const vid = tr.getAttribute("data-vehicle-id");
+            if (!vid) return;
+            const row = rows.find(function (r) { return r.vehicle_id === vid; });
+            if (row) openAssignModal(row);
+        }
+        tablaBox.querySelectorAll("tr.bus-row").forEach(function (tr) {
+            tr.addEventListener("click", function () { abrirDesdeFila(tr); });
+            tr.addEventListener("keydown", function (ev) {
+                if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault();
+                    abrirDesdeFila(tr);
+                }
             });
         });
     }

@@ -597,6 +597,20 @@ table.arrivals tbody tr:hover {
     background: var(--gray-50);
 }
 
+table.arrivals tbody tr.bus-row {
+    cursor: pointer;
+}
+
+table.arrivals tbody tr.bus-row:focus-visible {
+    outline: 2px solid var(--primary-600);
+    outline-offset: -2px;
+    background: var(--primary-50, #eef2ff);
+}
+
+table.arrivals tbody tr.bus-row:active {
+    background: var(--primary-50, #eef2ff);
+}
+
 table.arrivals th {
     background: var(--surface-2);
     color: var(--text-muted);
@@ -855,9 +869,30 @@ table.arrivals td.hace {
     table.arrivals td.interno {
         font-size: 13px;
     }
+    /* En móvil ocultamos el botón Asignar de la celda pero la celda muestra
+       un chevron indicando que la fila es tappable. */
     table.arrivals th:last-child,
     table.arrivals td:last-child {
+        width: 36px;
+        padding-left: 4px;
+        padding-right: 8px;
+        text-align: right;
+    }
+    table.arrivals td:last-child .btn-assign {
         display: none;
+    }
+    table.arrivals td:last-child::after {
+        content: "›";
+        color: var(--primary-600);
+        font-size: 22px;
+        font-weight: 700;
+        line-height: 1;
+    }
+    table.arrivals th:last-child {
+        font-size: 0;
+    }
+    table.arrivals tbody tr.bus-row {
+        -webkit-tap-highlight-color: rgba(99, 102, 241, 0.15);
     }
     .itin-head {
         font-size: 13px;
