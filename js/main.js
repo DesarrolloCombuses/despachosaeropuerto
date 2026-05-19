@@ -913,6 +913,14 @@
                             ${isCancelado ? "disabled" : ""}
                             data-id="${escapeHtml(r.id)}">
                     </td>
+                    <td>
+                        <input type="text" class="observaciones-input"
+                            value="${escapeHtml(r.observaciones || "")}"
+                            placeholder="Sin observaciones"
+                            maxlength="500"
+                            ${isCancelado ? "disabled" : ""}
+                            data-id="${escapeHtml(r.id)}">
+                    </td>
                     <td><span class="estado-pill ${estadoCls}">${estadoTxt}</span></td>
                     <td>${accionHtml}</td>
                 </tr>
@@ -928,6 +936,7 @@
                         <th>Bus</th>
                         <th>Itinerario</th>
                         <th>Pasajeros</th>
+                        <th>Observaciones</th>
                         <th>Estado</th>
                         <th>Acción</th>
                     </tr>
@@ -961,6 +970,42 @@
                     input.classList.remove("saving");
                     showToast("err", "Error guardando pasajeros: " + (err.message || err));
                 }
+            });
+        });
+
+        // Listeners para edición de observaciones (auto-save con debounce + en blur)
+        box.querySelectorAll(".observaciones-input").forEach(function (input) {
+            let t = null;
+            async function guardar() {
+                const id = input.dataset.id;
+                const nuevo = (input.value || "").trim();
+                const r = realizados.find(function (x) { return x.id === id; });
+                if (r && (r.observaciones || "") === nuevo) return; // sin cambios reales
+                input.classList.add("saving");
+                try {
+                    const { error } = await client
+                        .from(cfg.TABLA_REALIZADOS)
+                        .update({ observaciones: nuevo })
+                        .eq("id", id);
+                    if (error) throw error;
+                    input.classList.remove("saving");
+                    input.classList.add("saved");
+                    setTimeout(function () { input.classList.remove("saved"); }, 1500);
+                    if (r) r.observaciones = nuevo;
+                } catch (err) {
+                    input.classList.remove("saving");
+                    showToast("err", "Error guardando observación: " + (err.message || err));
+                }
+            }
+            // Auto-save 700ms después de dejar de escribir
+            input.addEventListener("input", function () {
+                clearTimeout(t);
+                t = setTimeout(guardar, 700);
+            });
+            // Y al perder el foco, garantizado
+            input.addEventListener("blur", function () {
+                clearTimeout(t);
+                guardar();
             });
         });
 

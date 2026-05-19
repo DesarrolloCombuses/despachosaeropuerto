@@ -1671,6 +1671,35 @@ input[readonly] {
     opacity: 0.7;
 }
 
+.observaciones-input {
+    width: 100%;
+    min-width: 180px;
+    max-width: 280px;
+    padding: 6px 8px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    font-family: inherit;
+    transition: all var(--transition);
+}
+.observaciones-input::placeholder { color: var(--text-muted); font-weight: 400; font-style: italic; }
+.observaciones-input:focus {
+    outline: none;
+    border-color: var(--primary-500);
+    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+.observaciones-input.saving { border-color: var(--warning-500); }
+.observaciones-input.saved { border-color: var(--success-500); }
+.observaciones-input:disabled {
+    background: var(--gray-100);
+    color: var(--text-secondary);
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
 .btn-cancelar {
     background: var(--error-50);
     color: var(--error-600);

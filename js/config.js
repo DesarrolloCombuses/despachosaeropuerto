@@ -4,7 +4,7 @@
 // con política de solo SELECT para el rol anon.
 window.APP_CONFIG = {
     // Versión visible de la app — debe coincidir con sw.js
-    APP_VERSION: "v1.7.0",
+    APP_VERSION: "v1.7.1",
     SUPABASE_URL: "https://cbplebkmxrkaafqdhiyi.supabase.co",
     SUPABASE_ANON_KEY: "sb_publishable_DZCceNTENY4ViP17-eZrGg_bdMElZ9X",
     TABLA: "llegadas_104",
