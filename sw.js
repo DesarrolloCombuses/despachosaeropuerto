@@ -5,7 +5,7 @@
 // - Tiles del mapa (OSM):               Network First con fallback a cache
 // - API Supabase REST + Edge Functions: Network Only (datos frescos siempre)
 
-const VERSION = "v1.4.0";
+const VERSION = "v1.7.0";
 const CACHE_APP = "jmc-app-" + VERSION;
 const CACHE_CDN = "jmc-cdn-" + VERSION;
 const CACHE_TILES = "jmc-tiles-" + VERSION;
@@ -23,6 +23,15 @@ const APP_SHELL = [
     "./icons/icon-192.png",
     "./icons/icon-512.png",
     "./icons/icon-maskable-512.png",
+];
+
+// CDN externos: los precacheamos en una caché aparte durante el install
+// para que la segunda visita arranque sin tocar red en absoluto.
+const CDN_PRECACHE = [
+    "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css",
+    "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js",
+    "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2",
+    "https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;900&display=swap",
 ];
 
 // Recursos de CDN que cacheamos en cuanto se piden
@@ -49,11 +58,18 @@ const TILE_HOSTS = [
 // ============== INSTALACIÓN ==============
 self.addEventListener("install", (event) => {
     event.waitUntil(
-        caches.open(CACHE_APP).then((cache) => {
-            // addAll falla si CUALQUIER recurso falla. Agregamos uno por uno
-            // para no romper la instalación si algo no carga.
-            return Promise.allSettled(APP_SHELL.map((url) => cache.add(url)));
-        }).then(() => self.skipWaiting())
+        Promise.all([
+            // App shell mismo origen
+            caches.open(CACHE_APP).then((cache) =>
+                Promise.allSettled(APP_SHELL.map((url) => cache.add(url)))
+            ),
+            // CDN externos (no rompe install si alguno falla)
+            caches.open(CACHE_CDN).then((cache) =>
+                Promise.allSettled(CDN_PRECACHE.map((url) =>
+                    cache.add(new Request(url, { mode: "no-cors" }))
+                ))
+            ),
+        ]).then(() => self.skipWaiting())
     );
 });
 

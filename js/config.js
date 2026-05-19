@@ -3,6 +3,8 @@
 // siempre que la tabla llegadas_104 tenga Row Level Security activada
 // con política de solo SELECT para el rol anon.
 window.APP_CONFIG = {
+    // Versión visible de la app — debe coincidir con sw.js
+    APP_VERSION: "v1.7.0",
     SUPABASE_URL: "https://cbplebkmxrkaafqdhiyi.supabase.co",
     SUPABASE_ANON_KEY: "sb_publishable_DZCceNTENY4ViP17-eZrGg_bdMElZ9X",
     TABLA: "llegadas_104",
@@ -14,6 +16,11 @@ window.APP_CONFIG = {
     SONAR_CANCEL_URL: "https://cbplebkmxrkaafqdhiyi.supabase.co/functions/v1/sonar-cancel",
     // Nombre de la tabla donde se guardan los despachos realizados
     TABLA_REALIZADOS: "despachos_realizados",
+    // Tabla de vehículos para el despacho manual (columnas: ID, INTERNO, Placa)
+    TABLA_VEHICULOS: "vehiculossonar",
+    // CSV publicado de Google Sheets con la nómina de conductores
+    // Columnas: dr_id, cedula, fleet, nombre, status, email, celular
+    CONDUCTORES_CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vThNrFZLbNklMFtPeg0wF4TA1vZHnZ4YNMmGcnHfty_RoNuAQw__iV2GMXqTsv36MPiks1ARpYui1JK/pub?gid=0&single=true&output=csv",
     // Lookback por defecto (horas) para la pestaña Despachos
     DESPACHOS_LOOKBACK_HORAS: 5,
     // Solo se muestran los despachos cuyo itDesc esté en esta lista

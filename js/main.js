@@ -8,19 +8,35 @@
             navigator.serviceWorker.register("./sw.js")
                 .then(function (reg) {
                     console.log("[PWA] Service Worker registrado", reg.scope);
-                    // Detectar actualizaciones del SW
+
+                    // Auto-actualización: cuando se instala un SW nuevo,
+                    // si ya había uno controlando la página, le decimos
+                    // que tome el control sin pedir confirmación.
+                    function activarSiInstalado(worker) {
+                        if (!worker) return;
+                        if (worker.state === "installed" && navigator.serviceWorker.controller) {
+                            worker.postMessage("SKIP_WAITING");
+                        }
+                    }
+                    // Caso 1: ya hay un worker en "waiting" al cargar
+                    activarSiInstalado(reg.waiting);
+                    // Caso 2: detectamos una actualización mientras la app está abierta
                     reg.addEventListener("updatefound", function () {
                         const nuevo = reg.installing;
                         if (!nuevo) return;
                         nuevo.addEventListener("statechange", function () {
-                            if (nuevo.state === "installed" && navigator.serviceWorker.controller) {
-                                mostrarBotonActualizar(nuevo);
-                            }
+                            activarSiInstalado(nuevo);
                         });
+                    });
+                    // Revisar actualizaciones cuando la pestaña vuelve a primer plano
+                    document.addEventListener("visibilitychange", function () {
+                        if (document.visibilityState === "visible") {
+                            reg.update().catch(function () { /* sin red, ignorar */ });
+                        }
                     });
                 })
                 .catch(function (err) { console.warn("[PWA] SW falló:", err); });
-            // Si el SW activo cambia (se actualizó), recargamos
+            // Cuando el SW activo cambia (auto-update), recargamos una vez
             navigator.serviceWorker.addEventListener("controllerchange", function () {
                 if (window._actualizandoSW) return;
                 window._actualizandoSW = true;
@@ -29,24 +45,22 @@
         });
     }
 
-    function mostrarBotonActualizar(worker) {
-        let banner = document.getElementById("updateBanner");
-        if (!banner) {
-            banner = document.createElement("div");
-            banner.id = "updateBanner";
-            banner.className = "update-banner";
-            banner.innerHTML = `
-                <span>Nueva versión disponible</span>
-                <button type="button" class="btn-update">Actualizar</button>
-            `;
-            document.body.appendChild(banner);
-            banner.querySelector("button").addEventListener("click", function () {
-                worker.postMessage("SKIP_WAITING");
-            });
-        }
-    }
-
     const cfg = window.APP_CONFIG;
+
+    // Quitar el splash y pintar la versión en cuanto el DOM esté listo.
+    // Con scripts deferred esto se ejecuta justo antes de DOMContentLoaded.
+    function listoUiInicial() {
+        const v = document.getElementById("appVersion");
+        if (v && cfg && cfg.APP_VERSION) v.textContent = cfg.APP_VERSION;
+        document.body.classList.add("app-ready");
+        const splash = document.getElementById("appSplash");
+        if (splash) setTimeout(function () { splash.remove(); }, 250);
+    }
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", listoUiInicial, { once: true });
+    } else {
+        listoUiInicial();
+    }
     if (!cfg || !cfg.SUPABASE_URL || !cfg.SUPABASE_ANON_KEY) {
         document.getElementById("tablaBox").innerHTML =
             '<div class="loading">Falta configuración en config.js</div>';
@@ -77,6 +91,10 @@
     let despachos = [];
     let despachosFiltroActivos = true;
     let despachosLoading = false;
+    let vehiculos = [];
+    let vehiculosLoading = null;
+    let conductores = [];
+    let conductoresLoading = null;
     let realizados = [];
     let realizadosFiltroActivos = true;
     let realizadosChannel = null;
@@ -1171,6 +1189,421 @@
         }
     }
 
+    // ============== Despacho manual ==============
+    function parseCsv(text) {
+        // Parser CSV mínimo: maneja comillas dobles y comas dentro de comillas.
+        const rows = [];
+        let i = 0, field = "", row = [], inQuotes = false;
+        while (i < text.length) {
+            const c = text[i];
+            if (inQuotes) {
+                if (c === '"') {
+                    if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+                    inQuotes = false; i++; continue;
+                }
+                field += c; i++; continue;
+            }
+            if (c === '"') { inQuotes = true; i++; continue; }
+            if (c === ",") { row.push(field); field = ""; i++; continue; }
+            if (c === "\r") { i++; continue; }
+            if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; i++; continue; }
+            field += c; i++;
+        }
+        if (field.length || row.length) { row.push(field); rows.push(row); }
+        if (!rows.length) return [];
+        const headers = rows.shift().map(function (h) { return h.trim(); });
+        return rows
+            .filter(function (r) { return r.some(function (v) { return v && v.trim().length; }); })
+            .map(function (r) {
+                const obj = {};
+                headers.forEach(function (h, idx) { obj[h] = (r[idx] || "").trim(); });
+                return obj;
+            });
+    }
+
+    async function cargarConductores() {
+        if (conductoresLoading) return conductoresLoading;
+        conductoresLoading = (async function () {
+            try {
+                const resp = await fetch(cfg.CONDUCTORES_CSV_URL, { cache: "no-store" });
+                if (!resp.ok) throw new Error("HTTP " + resp.status);
+                const text = await resp.text();
+                const filas = parseCsv(text);
+                conductores = filas
+                    .filter(function (c) {
+                        return c.dr_id && c.nombre &&
+                            (c.status || "").toUpperCase() === "ENABLED";
+                    })
+                    .sort(function (a, b) { return a.nombre.localeCompare(b.nombre, "es"); });
+            } catch (err) {
+                console.warn("Error cargando conductores:", err);
+                conductores = [];
+            } finally {
+                conductoresLoading = null;
+            }
+        })();
+        return conductoresLoading;
+    }
+
+    async function cargarVehiculos() {
+        if (vehiculosLoading) return vehiculosLoading;
+        vehiculosLoading = (async function () {
+            try {
+                const { data, error } = await client
+                    .from(cfg.TABLA_VEHICULOS)
+                    .select('"ID","INTERNO","Placa"')
+                    .order("INTERNO", { ascending: true });
+                if (error) throw error;
+                vehiculos = (data || [])
+                    .filter(function (v) { return v && v.ID; })
+                    .map(function (v) {
+                        return { mid: v.ID, interno: v.INTERNO, placa: v.Placa };
+                    });
+            } catch (err) {
+                console.warn("Error cargando vehículos:", err);
+                vehiculos = [];
+            } finally {
+                vehiculosLoading = null;
+            }
+        })();
+        return vehiculosLoading;
+    }
+
+    function normalizar(s) {
+        return String(s == null ? "" : s)
+            .normalize("NFD")
+            .replace(/[̀-ͯ]/g, "")
+            .toLowerCase()
+            .trim();
+    }
+
+    function buscarVehiculoPorInterno(val) {
+        const v = normalizar(val);
+        if (!v) return null;
+        return vehiculos.find(function (x) {
+            return normalizar(x.interno) === v;
+        }) || null;
+    }
+
+    function buscarConductorPorNombre(val) {
+        const v = normalizar(val);
+        if (!v) return null;
+        return conductores.find(function (c) {
+            return normalizar(c.nombre) === v;
+        }) || null;
+    }
+
+    // ===== Combobox genérico (input + dropdown filtrable) =====
+    function setupCombobox(opts) {
+        // opts: { input, list, getItems, getValue, matches(item, q), renderItem(item), onSelect(item) }
+        const input = opts.input;
+        const list = opts.list;
+        let activeIndex = -1;
+        let resultados = [];
+
+        function abrir() {
+            const q = input.value;
+            const items = opts.getItems();
+            resultados = q.trim()
+                ? items.filter(function (it) { return opts.matches(it, q); })
+                : items.slice(0, 100);
+            renderLista();
+            list.hidden = false;
+        }
+
+        function cerrar() {
+            list.hidden = true;
+            activeIndex = -1;
+        }
+
+        function renderLista() {
+            if (!resultados.length) {
+                list.innerHTML = '<div class="combobox-empty">Sin resultados</div>';
+                return;
+            }
+            list.innerHTML = resultados.slice(0, 50).map(function (it, idx) {
+                const html = opts.renderItem(it);
+                return `<div class="combobox-item${idx === activeIndex ? " active" : ""}" role="option" data-idx="${idx}">${html}</div>`;
+            }).join("");
+        }
+
+        function seleccionar(idx) {
+            const it = resultados[idx];
+            if (!it) return;
+            input.value = opts.getValue(it);
+            cerrar();
+            if (opts.onSelect) opts.onSelect(it);
+        }
+
+        input.addEventListener("focus", abrir);
+        input.addEventListener("input", function () {
+            activeIndex = -1;
+            abrir();
+            if (opts.onChange) opts.onChange();
+        });
+        input.addEventListener("keydown", function (ev) {
+            if (list.hidden) {
+                if (ev.key === "ArrowDown" || ev.key === "Enter") { abrir(); ev.preventDefault(); }
+                return;
+            }
+            if (ev.key === "ArrowDown") {
+                activeIndex = Math.min(resultados.length - 1, activeIndex + 1);
+                renderLista();
+                ev.preventDefault();
+            } else if (ev.key === "ArrowUp") {
+                activeIndex = Math.max(0, activeIndex - 1);
+                renderLista();
+                ev.preventDefault();
+            } else if (ev.key === "Enter") {
+                if (activeIndex >= 0) {
+                    seleccionar(activeIndex);
+                    ev.preventDefault();
+                }
+            } else if (ev.key === "Escape") {
+                cerrar();
+            }
+        });
+        // Click en un item del dropdown
+        list.addEventListener("mousedown", function (ev) {
+            const el = ev.target.closest(".combobox-item");
+            if (!el) return;
+            ev.preventDefault(); // evita perder el foco antes del click
+            const idx = parseInt(el.dataset.idx, 10);
+            if (Number.isFinite(idx)) seleccionar(idx);
+        });
+        // Cerrar al hacer clic fuera
+        document.addEventListener("mousedown", function (ev) {
+            if (!list.hidden && !input.parentElement.contains(ev.target)) cerrar();
+        });
+
+        return { abrir, cerrar };
+    }
+
+    function extraerBase(email) {
+        if (!email) return "";
+        const m = String(email).match(/BASE\s*\d+/i);
+        return m ? m[0].toUpperCase().replace(/\s+/, " ") : "";
+    }
+
+    function actualizarCamposVehiculo() {
+        const inputInterno = document.getElementById("manualInterno");
+        const inputMid = document.getElementById("manualMid");
+        const v = buscarVehiculoPorInterno(inputInterno.value);
+        inputMid.value = v ? v.mid : "";
+    }
+
+    function actualizarCamposConductor() {
+        const inputCond = document.getElementById("manualConductor");
+        const inputDrvId = document.getElementById("manualDriverId");
+        const inputBase = document.getElementById("manualBase");
+        const c = buscarConductorPorNombre(inputCond.value);
+        inputDrvId.value = c ? c.dr_id : "";
+        inputBase.value = c ? extraerBase(c.email) : "";
+    }
+
+    function abrirManualModal() {
+        const modal = document.getElementById("manualModal");
+        const selItin = document.getElementById("manualItin");
+
+        // Solo estos 3 itinerarios están permitidos para despacho manual
+        const PERMITIDOS = ["3385", "4501", "4503"];
+        const itins = (cfg.ITINERARIOS || []).filter(function (i) { return PERMITIDOS.includes(i.id); });
+        selItin.innerHTML = '<option value="">Selecciona itinerario...</option>' +
+            itins.map(function (i) {
+                return `<option value="${escapeHtml(i.id)}">${escapeHtml(i.nombre)} (${escapeHtml(i.grupo)})</option>`;
+            }).join("");
+
+        document.getElementById("manualInterno").value = "";
+        document.getElementById("manualMid").value = "";
+        document.getElementById("manualBase").value = "";
+        document.getElementById("manualConductor").value = "";
+        document.getElementById("manualDriverId").value = "";
+        document.getElementById("manualObs").value = "";
+        document.getElementById("manualError").hidden = true;
+
+        const aviso = [];
+        if (!vehiculos.length) aviso.push("Sin vehículos cargados");
+        if (!conductores.length) aviso.push("Sin conductores cargados");
+        if (aviso.length) {
+            const err = document.getElementById("manualError");
+            err.textContent = aviso.join(" · ") + " — revisa la conexión / RLS";
+            err.hidden = false;
+        }
+
+        modal.hidden = false;
+        setTimeout(function () { document.getElementById("manualInterno").focus(); }, 50);
+    }
+
+    function cerrarManualModal() {
+        document.getElementById("manualModal").hidden = true;
+    }
+
+    async function submitManual(ev) {
+        ev.preventDefault();
+        const submitBtn = document.getElementById("manualSubmit");
+        const errorBox = document.getElementById("manualError");
+
+        // Vehículo (resuelto por interno)
+        const internoVal = document.getElementById("manualInterno").value.trim();
+        const v = buscarVehiculoPorInterno(internoVal);
+        const mId = v ? v.mid : "";
+        const interno = v ? String(v.interno || "") : internoVal;
+        const placa = v ? String(v.placa || "") : "";
+
+        // Conductor (resuelto por nombre)
+        const condVal = document.getElementById("manualConductor").value.trim();
+        const c = buscarConductorPorNombre(condVal);
+        const drvId = c ? c.dr_id : "";
+        const driverNombre = c ? c.nombre : condVal;
+
+        const itinerary = document.getElementById("manualItin").value;
+        const observaciones = document.getElementById("manualObs").value.trim();
+
+        if (!mId) { errorBox.textContent = "Selecciona un interno válido de la lista (MID requerido)."; errorBox.hidden = false; return; }
+        if (!drvId) { errorBox.textContent = "Selecciona un conductor válido de la lista (Driver ID requerido)."; errorBox.hidden = false; return; }
+        if (!itinerary) { errorBox.textContent = "Selecciona un itinerario."; errorBox.hidden = false; return; }
+
+        const itinObj = (cfg.ITINERARIOS || []).find(function (i) { return i.id === itinerary; });
+
+        const detalleHtml = `
+            <div><strong>Bus:</strong> ${escapeHtml(interno || mId)}${placa ? ` <span class="placa-tag">${escapeHtml(placa)}</span>` : ""}</div>
+            <div><strong>Conductor:</strong> ${escapeHtml(driverNombre)} (${escapeHtml(drvId)})</div>
+            <div><strong>Itinerario:</strong> ${escapeHtml(itinObj?.nombre || itinerary)}</div>
+            ${observaciones ? `<div><strong>Observación:</strong> ${escapeHtml(observaciones)}</div>` : ""}
+        `;
+        const ok = await mostrarConfirmacion({
+            titulo: "Confirmar despacho manual",
+            mensaje: "Se enviará la orden a Sonar y quedará registrada en Despachos realizados.",
+            detalle: detalleHtml,
+            textoConfirmar: "Sí, despachar",
+            textoCancelar: "Revisar",
+            tipo: "info",
+        });
+        if (!ok) return;
+
+        errorBox.hidden = true;
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Enviando...";
+
+        try {
+            const resp = await fetch(cfg.SONAR_DISPATCH_URL, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    apikey: cfg.SUPABASE_ANON_KEY,
+                    Authorization: "Bearer " + cfg.SUPABASE_ANON_KEY,
+                },
+                body: JSON.stringify({ mId, itinerary, drvId, observaciones }),
+            });
+            const data = await resp.json().catch(function () { return {}; });
+            if (!resp.ok || data.success === false) {
+                throw new Error(data.message || data.error || ("HTTP " + resp.status));
+            }
+
+            const regId = data?.data?.regId || "";
+            if (regId) {
+                try {
+                    const { error } = await client.from(cfg.TABLA_REALIZADOS).insert({
+                        reg_id: regId,
+                        vehicle_id: mId,
+                        interno: interno || mId,
+                        placa: placa,
+                        itinerario_id: itinerary,
+                        itinerario: itinObj?.nombre || "",
+                        driver_id: drvId,
+                        observaciones: observaciones,
+                        pasajeros: 0,
+                        created_by: currentUser?.id || null,
+                    });
+                    if (error) console.warn("Insert despachos_realizados (manual) falló:", error);
+                } catch (e) {
+                    console.warn("No se pudo guardar el despacho manual local:", e);
+                }
+            }
+
+            cerrarManualModal();
+            showToast("ok", `Despacho manual asignado${regId ? " · regId: " + regId : ""}`);
+        } catch (err) {
+            errorBox.textContent = "Error: " + (err.message || String(err));
+            errorBox.hidden = false;
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = "Enviar despacho";
+        }
+    }
+
+    function initManualModal() {
+        const modal = document.getElementById("manualModal");
+        if (!modal) return;
+        modal.querySelectorAll("[data-close]").forEach(function (btn) {
+            btn.addEventListener("click", cerrarManualModal);
+        });
+        modal.addEventListener("click", function (ev) {
+            if (ev.target === modal) cerrarManualModal();
+        });
+        document.addEventListener("keydown", function (ev) {
+            if (ev.key === "Escape" && !modal.hidden) cerrarManualModal();
+        });
+        document.getElementById("manualForm").addEventListener("submit", submitManual);
+
+        // Combobox de vehículos: filtra por interno o placa
+        const inputInterno = document.getElementById("manualInterno");
+        const listInterno = inputInterno.parentElement.querySelector(".combobox-list");
+        setupCombobox({
+            input: inputInterno,
+            list: listInterno,
+            getItems: function () { return vehiculos; },
+            getValue: function (v) { return v.interno != null ? String(v.interno) : ""; },
+            matches: function (v, q) {
+                const n = normalizar(q);
+                return normalizar(v.interno).includes(n) ||
+                    normalizar(v.placa).includes(n) ||
+                    normalizar(v.mid).includes(n);
+            },
+            renderItem: function (v) {
+                return `<span class="combobox-item-title">${escapeHtml(v.interno || "")}</span>` +
+                    `<span class="combobox-item-meta">${escapeHtml(v.placa || "")} · MID ${escapeHtml(v.mid)}</span>`;
+            },
+            onSelect: actualizarCamposVehiculo,
+            onChange: actualizarCamposVehiculo,
+        });
+
+        // Combobox de conductores: filtra por nombre o cédula
+        const inputCond = document.getElementById("manualConductor");
+        const listCond = inputCond.parentElement.querySelector(".combobox-list");
+        setupCombobox({
+            input: inputCond,
+            list: listCond,
+            getItems: function () { return conductores; },
+            getValue: function (c) { return c.nombre || ""; },
+            matches: function (c, q) {
+                const n = normalizar(q);
+                return normalizar(c.nombre).includes(n) ||
+                    normalizar(c.cedula).includes(n) ||
+                    normalizar(c.dr_id).includes(n);
+            },
+            renderItem: function (c) {
+                const base = extraerBase(c.email);
+                const meta = [c.cedula ? "Cédula " + c.cedula : "", base, "ID " + c.dr_id].filter(Boolean).join(" · ");
+                return `<span class="combobox-item-title">${escapeHtml(c.nombre)}</span>` +
+                    `<span class="combobox-item-meta">${escapeHtml(meta)}</span>`;
+            },
+            onSelect: actualizarCamposConductor,
+            onChange: actualizarCamposConductor,
+        });
+
+        const btn = document.getElementById("btnManualDispatch");
+        if (btn) {
+            btn.addEventListener("click", async function () {
+                const tareas = [];
+                if (!vehiculos.length) tareas.push(cargarVehiculos());
+                if (!conductores.length) tareas.push(cargarConductores());
+                if (tareas.length) await Promise.all(tareas);
+                abrirManualModal();
+            });
+        }
+    }
+
     // ============== AUTH ==============
     function initAuth() {
         const form = document.getElementById("loginForm");
@@ -1247,13 +1680,16 @@
     function actualizarUiAuth() {
         const loginScreen = document.getElementById("loginScreen");
         const btnLogout = document.getElementById("btnLogout");
+        const btnManual = document.getElementById("btnManualDispatch");
         if (currentUser) {
             loginScreen.hidden = true;
             btnLogout.hidden = false;
             btnLogout.title = `Cerrar sesión (${currentUser.email})`;
+            if (btnManual) btnManual.hidden = false;
         } else {
             loginScreen.hidden = false;
             btnLogout.hidden = true;
+            if (btnManual) btnManual.hidden = true;
         }
     }
 
@@ -1263,6 +1699,7 @@
         initTabs();
         initMap();
         initModal();
+        initManualModal();
         initDespachosControles();
         initRealizadosControles();
         if (navigator.onLine) {
@@ -1270,6 +1707,8 @@
             suscribirRealtime();
             suscribirRealizadosRealtime();
             cargarRealizados();
+            cargarVehiculos();
+            cargarConductores();
         } else {
             setConnection("offline");
         }
