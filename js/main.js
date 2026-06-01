@@ -9,13 +9,12 @@
                 .then(function (reg) {
                     console.log("[PWA] Service Worker registrado", reg.scope);
 
-                    // Auto-actualización: cuando se instala un SW nuevo,
-                    // si ya había uno controlando la página, le decimos
-                    // que tome el control sin pedir confirmación.
+                    // Cuando se instala un SW nuevo, mostramos un banner
+                    // informando al usuario. Si no actúa en 10 s, lo aplicamos solo.
                     function activarSiInstalado(worker) {
                         if (!worker) return;
                         if (worker.state === "installed" && navigator.serviceWorker.controller) {
-                            worker.postMessage("SKIP_WAITING");
+                            mostrarBannerActualizar(worker);
                         }
                     }
                     // Caso 1: ya hay un worker en "waiting" al cargar
@@ -43,6 +42,40 @@
                 window.location.reload();
             });
         });
+    }
+
+    function mostrarBannerActualizar(worker) {
+        if (document.getElementById("updateBanner")) return; // ya hay uno
+        const banner = document.createElement("div");
+        banner.id = "updateBanner";
+        banner.className = "update-banner";
+        banner.innerHTML = `
+            <span id="updateMsg">Nueva versión disponible · se actualizará en <b id="updateCount">10</b>s</span>
+            <button type="button" class="btn-update">Actualizar ahora</button>
+        `;
+        document.body.appendChild(banner);
+
+        let restante = 10;
+        const countEl = banner.querySelector("#updateCount");
+        const tick = setInterval(function () {
+            restante -= 1;
+            if (countEl) countEl.textContent = String(Math.max(0, restante));
+            if (restante <= 0) {
+                clearInterval(tick);
+                aplicar();
+            }
+        }, 1000);
+
+        function aplicar() {
+            clearInterval(tick);
+            const msg = document.getElementById("updateMsg");
+            if (msg) msg.textContent = "Actualizando...";
+            const btn = banner.querySelector(".btn-update");
+            if (btn) btn.disabled = true;
+            try { worker.postMessage("SKIP_WAITING"); } catch (_) { /* noop */ }
+        }
+
+        banner.querySelector("button").addEventListener("click", aplicar);
     }
 
     const cfg = window.APP_CONFIG;
@@ -1450,8 +1483,8 @@
         const modal = document.getElementById("manualModal");
         const selItin = document.getElementById("manualItin");
 
-        // Solo estos 3 itinerarios están permitidos para despacho manual
-        const PERMITIDOS = ["3385", "4501", "4503"];
+        // Itinerarios permitidos para despacho manual
+        const PERMITIDOS = ["3385", "4501", "4503", "4507"];
         const itins = (cfg.ITINERARIOS || []).filter(function (i) { return PERMITIDOS.includes(i.id); });
         selItin.innerHTML = '<option value="">Selecciona itinerario...</option>' +
             itins.map(function (i) {

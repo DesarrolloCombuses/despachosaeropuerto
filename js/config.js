@@ -4,7 +4,7 @@
 // con política de solo SELECT para el rol anon.
 window.APP_CONFIG = {
     // Versión visible de la app — debe coincidir con sw.js
-    APP_VERSION: "v1.7.1",
+    APP_VERSION: "v1.7.4",
     SUPABASE_URL: "https://cbplebkmxrkaafqdhiyi.supabase.co",
     SUPABASE_ANON_KEY: "sb_publishable_DZCceNTENY4ViP17-eZrGg_bdMElZ9X",
     TABLA: "llegadas_104",
@@ -40,6 +40,7 @@ window.APP_CONFIG = {
         { id: "4501", grupo: "AEROPUERTO",   nombre: "Aeropuerto-autopista-terminalnorte" },
         { id: "4502", grupo: "EXPOSICIONES", nombre: "Nutibara-exposiciones-tunel-aeropuerto" },
         { id: "4503", grupo: "AEROPUERTO",   nombre: "Aeropuerto-Tunel-Exposiciones-Nutibara" },
+        { id: "4507", grupo: "AEROPUERTO",   nombre: "Aeropuerto-Tunel-ccsandiego" },
         { id: "4505", grupo: "SANDIEGO",     nombre: "Almacentro-Tunel-Aeropuerto" },
     ],
     // Centro inicial del mapa (Aeropuerto JMC)
