@@ -386,7 +386,7 @@
         document.getElementById("assignBus").textContent = row.interno || row.vehicle_id || "—";
         document.getElementById("assignDriver").textContent = row.driver_id || "—";
         const select = document.getElementById("assignItin");
-        const EXCLUIDOS = ["4413"]; // Aeropuerto-Exposiciones
+        const EXCLUIDOS = ["4413", "3385"]; // Aeropuerto-Exposiciones, Aeropuerto-San Diego-Tunel
         const itins = (cfg.ITINERARIOS || []).filter(function (i) {
             return i.grupo === "AEROPUERTO" && !EXCLUIDOS.includes(i.id);
         });
@@ -1484,7 +1484,7 @@
         const selItin = document.getElementById("manualItin");
 
         // Itinerarios permitidos para despacho manual
-        const PERMITIDOS = ["3385", "4501", "4503", "4507"];
+        const PERMITIDOS = ["4501", "4503", "4507"];
         const itins = (cfg.ITINERARIOS || []).filter(function (i) { return PERMITIDOS.includes(i.id); });
         selItin.innerHTML = '<option value="">Selecciona itinerario...</option>' +
             itins.map(function (i) {
