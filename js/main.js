@@ -191,8 +191,14 @@
         markersLayer = L.layerGroup().addTo(map);
     }
 
+    function esListo(row) {
+        const min = row.espera_min;
+        const umbral = (cfg.LISTO_MINUTOS != null) ? cfg.LISTO_MINUTOS : 180;
+        return typeof min === "number" && min >= umbral;
+    }
+
     function busMarkerIcon(row) {
-        const cls = row.listo ? "bus-marker" : "bus-marker bus-espera";
+        const cls = esListo(row) ? "bus-marker" : "bus-marker bus-espera";
         const label = escapeHtml(String(row.interno || row.vehicle_id || ""));
         return L.divIcon({
             className: "",
@@ -236,17 +242,18 @@
     }
 
     function popupHtml(row) {
-        const hace = humanizeAge(row.hora_llegada);
-        const estado = row.listo ? "LISTO" : "ESPERA";
-        const cls = row.listo ? "listo" : "espera";
+        const hace = humanizeAge(row.llegada_aeropuerto);
+        const listo = esListo(row);
+        const estado = listo ? "LISTO" : "ESPERA";
+        const cls = listo ? "listo" : "espera";
         return `
             <div style="font-size:13px;min-width:180px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
                 <div style="font-weight:900;color:#2b33ff;font-size:16px;margin-bottom:6px;">
                     Bus ${escapeHtml(row.interno || row.vehicle_id || "")}
                 </div>
                 <div style="margin-bottom:4px;"><b>${escapeHtml(row.itinerario || "")}</b></div>
-                <div style="margin-bottom:4px;">Posición: <b>#${row.posicion ?? "-"}</b></div>
-                <div style="margin-bottom:4px;">Llegada: <b>${escapeHtml(formatHora(row.hora_llegada))}</b></div>
+                <div style="margin-bottom:4px;">Posición: <b>#${row._posGrupo ?? "-"}</b></div>
+                <div style="margin-bottom:4px;">Llegada: <b>${escapeHtml(formatHora(row.llegada_aeropuerto))}</b></div>
                 <div style="margin-bottom:6px;color:#6b7280;font-size:12px;">${escapeHtml(hace)}</div>
                 <span class="estado-pill ${cls}">${estado}</span>
             </div>
@@ -256,7 +263,7 @@
     // ============== Stats ==============
     function updateStats() {
         const total = rows.length;
-        const listos = rows.filter(function (r) { return r.listo; }).length;
+        const listos = rows.filter(esListo).length;
         const espera = total - listos;
 
         document.getElementById("statTotal").textContent = String(total);
@@ -278,9 +285,14 @@
             (grupos[k] = grupos[k] || []).push(r);
         });
         Object.values(grupos).forEach(function (arr) {
+            // "turno" es el orden FIFO global (por hora real de llegada al
+            // aeropuerto, con corroboración GPS); acá solo reordenamos cada
+            // grupo por ese mismo criterio y numeramos 1..N DENTRO del grupo
+            // (misma posición "por itinerario" que mostraba esta tabla antes).
             arr.sort(function (a, b) {
-                return (a.posicion || 9999) - (b.posicion || 9999);
+                return (a.turno || 9999) - (b.turno || 9999);
             });
+            arr.forEach(function (r, idx) { r._posGrupo = idx + 1; });
         });
 
         const itins = Object.keys(grupos).sort();
@@ -317,13 +329,14 @@
         tablaBox.innerHTML = visible.map(function (itin) {
             const items = grupos[itin];
             const filas = items.map(function (r) {
-                const hace = humanizeAge(r.hora_llegada);
-                const estadoCls = r.listo ? "listo" : "espera";
-                const estadoTxt = r.listo ? "LISTO" : "ESPERA";
+                const hace = humanizeAge(r.llegada_aeropuerto);
+                const listo = esListo(r);
+                const estadoCls = listo ? "listo" : "espera";
+                const estadoTxt = listo ? "LISTO" : "ESPERA";
                 return `
                     <tr class="bus-row" data-vehicle-id="${escapeHtml(r.vehicle_id || "")}" tabindex="0" role="button" aria-label="Asignar itinerario al bus ${escapeHtml(r.interno || "")}">
-                        <td class="pos">${r.posicion ?? "-"}</td>
-                        <td class="hora">${escapeHtml(formatHora(r.hora_llegada))}</td>
+                        <td class="pos">${r._posGrupo ?? "-"}</td>
+                        <td class="hora">${escapeHtml(formatHora(r.llegada_aeropuerto))}</td>
                         <td class="hace">${escapeHtml(hace)}</td>
                         <td class="interno">${escapeHtml(r.interno || "")}</td>
                         <td><span class="estado-pill ${estadoCls}">${estadoTxt}</span></td>
@@ -1163,7 +1176,7 @@
                 .from(cfg.TABLA)
                 .select("*")
                 .order("itinerario", { ascending: true })
-                .order("posicion", { ascending: true });
+                .order("turno", { ascending: true });
             if (error) throw error;
             rows = data || [];
             updateStats();
@@ -1189,7 +1202,7 @@
             realtimeChannel = null;
         }
         realtimeChannel = client
-            .channel("llegadas_104_changes")
+            .channel("enturnamiento_changes")
             .on("postgres_changes", { event: "*", schema: "public", table: cfg.TABLA }, function () {
                 cargarInicial();
             })

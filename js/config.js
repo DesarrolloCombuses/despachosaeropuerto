@@ -1,13 +1,19 @@
 // Configuración Supabase para la web pública.
 // Estas son las credenciales PÚBLICAS (anon key). Es seguro publicarlas
-// siempre que la tabla llegadas_104 tenga Row Level Security activada
-// con política de solo SELECT para el rol anon.
+// siempre que la tabla enturnamiento_actual tenga Row Level Security
+// activada con política de solo SELECT para el rol anon (y solo el
+// backend autenticado puede insertar/actualizar/borrar).
 window.APP_CONFIG = {
     // Versión visible de la app — debe coincidir con sw.js
-    APP_VERSION: "v1.7.5",
+    APP_VERSION: "v1.8.0",
     SUPABASE_URL: "https://cbplebkmxrkaafqdhiyi.supabase.co",
     SUPABASE_ANON_KEY: "sb_publishable_DZCceNTENY4ViP17-eZrGg_bdMElZ9X",
-    TABLA: "llegadas_104",
+    // Espejo de "esperando turno" que escribe despachosautomaticos (turno FIFO
+    // por hora de llegada confirmada, con corroboración GPS) -- reemplaza a
+    // llegadas_104 (basada solo en el evento 104 de Sonar).
+    TABLA: "enturnamiento_actual",
+    // Minutos de espera desde la llegada para marcar un bus como "Listo".
+    LISTO_MINUTOS: 180,
     // Edge Function que asigna itinerario a un bus en Sonar
     SONAR_DISPATCH_URL: "https://cbplebkmxrkaafqdhiyi.supabase.co/functions/v1/sonar-dispatch",
     // Edge Function que consulta GET_DispatchedVehicles

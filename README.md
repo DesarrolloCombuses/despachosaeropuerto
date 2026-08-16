@@ -1,11 +1,11 @@
 # Web pública — Llegadas Aeropuerto JMC
 
-Página estática que muestra en tiempo real las llegadas al aeropuerto leyendo la tabla `llegadas_104` de Supabase.
+Página estática que muestra en tiempo real quién está esperando turno en el aeropuerto, leyendo la tabla `enturnamiento_actual` de Supabase.
 
 ## Cómo funciona
 
 ```
-App Python (tu PC)  ──UPSERT──►  Supabase (llegadas_104)  ──Realtime──►  Esta web
+App Python (despachosautomaticos)  ──UPSERT──►  Supabase (enturnamiento_actual)  ──Realtime──►  Esta web
 ```
 
 La web:
@@ -69,7 +69,8 @@ Edita [`js/config.js`](js/config.js) si cambia tu Supabase:
 window.APP_CONFIG = {
     SUPABASE_URL: "https://TU-PROYECTO.supabase.co",
     SUPABASE_ANON_KEY: "tu_anon_key",
-    TABLA: "llegadas_104",
+    TABLA: "enturnamiento_actual",
+    LISTO_MINUTOS: 180,
     MAP_CENTER: { lat: 6.170989, lng: -75.431152 },
     MAP_ZOOM: 14,
 };
@@ -79,7 +80,7 @@ window.APP_CONFIG = {
 
 La `SUPABASE_ANON_KEY` es **pública por diseño** — Supabase la creó para usar en navegadores. La protección está en **Row Level Security**:
 
-- La tabla `llegadas_104` tiene policy: cualquiera puede `SELECT`.
+- La tabla `enturnamiento_actual` tiene policy: cualquiera puede `SELECT`.
 - Nadie puede `INSERT/UPDATE/DELETE` sin autenticarse (solo la app Python lo hace con credenciales).
 
 Si alguien intentara escribir desde la web, Supabase rechaza con 401.
