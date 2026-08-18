@@ -265,6 +265,11 @@ button {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: thin;
+    /* Difumina el borde derecho para insinuar que hay más pestañas al
+       deslizar -- sin esto, la última pestaña visible se corta en seco y
+       parece un error en vez de contenido scrolleable. */
+    mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent 100%);
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent 100%);
 }
 
 .tab {
@@ -1273,7 +1278,8 @@ table.arrivals td.hace {
     display: flex;
     align-items: center;
     justify-content: center;
-    gap: 12px;
+    flex-wrap: wrap;
+    gap: 10px 12px;
     padding: 14px 16px;
     border-top: 1px solid var(--border);
     background: var(--surface);
@@ -1311,6 +1317,15 @@ table.arrivals td.hace {
     font-weight: 500;
     min-width: 200px;
     text-align: center;
+    order: 3;
+    flex-basis: 100%;
+}
+
+@media (min-width: 460px) {
+    .pager-info {
+        order: 0;
+        flex-basis: auto;
+    }
 }
 
 .filter-toggle {
