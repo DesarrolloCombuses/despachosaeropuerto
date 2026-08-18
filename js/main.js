@@ -113,10 +113,17 @@
 
     // Estado global
     let rows = [];
+    let ocultos = new Set(); // ids (vehicle_id+llegada_aeropuerto) ocultados a mano de la lista de espera
+    let posiciones = []; // flota completa en vivo (sonar_posiciones)
     let selectedItin = null; // null = todos
+    let mapaBusqueda = ""; // filtro de texto del mapa (interno/placa/mid)
+    let mapaFiltroEstado = "todos"; // "todos" | "andando" | "detenido"
+    let mapaFiltroZona = null; // null | "patio_azul" | "subiendo" | "bajando" -- click en un mini-stat
     let map = null;
     let markersLayer = null;
-    let markersByVehicleId = {};
+    let markersByVehicleId = {}; // buses en fila
+    let markersFlotaByMid = {}; // resto de la flota
+    let turnoStopEls = {}; // línea de turno: vehicle_id -> elemento DOM
     let realtimeChannel = null;
     let reconnectTimer = null;
     let reconnectDelay = 2000; // ms, sube con backoff hasta 30s
@@ -134,6 +141,12 @@
     let realizadosPage = 1;
     let realizadosSearch = "";
     const REALIZADOS_PAGE_SIZE = 25;
+    let vuelos = [];
+    let vuelosLoading = false;
+    let resumenDirecciones = []; // en vivo, desde resumen_direcciones_actual
+    let direccionVehiculos = []; // en vivo, desde direccion_vehiculo_actual (una fila por bus)
+    let turnos = []; // programación de HOY, desde programacion_turnos
+    let turnosLoading = false;
     const CANCEL_WINDOW_MS = 60 * 60 * 1000; // 1 hora
 
     // ============== Tabs ==============
@@ -160,9 +173,6 @@
         if (name === "mapa" && map) {
             setTimeout(function () {
                 map.invalidateSize();
-                if (!window._fitDone && rows.length) {
-                    autoFitMap();
-                }
             }, 50);
         }
         // Cargar despachos cuando se entra a esa pestaña (si no se ha cargado todavía)
@@ -171,6 +181,20 @@
         }
         if (name === "realizados") {
             cargarRealizados();
+        }
+        if (name === "vuelos" && !vuelos.length && !vuelosLoading) {
+            cargarVuelos();
+        }
+        if (name === "subida") {
+            if (!realizados.length) cargarRealizados();
+            if (!resumenDirecciones.length) cargarResumenDirecciones();
+        }
+        if (name === "mapa") {
+            if (!resumenDirecciones.length) cargarResumenDirecciones();
+            if (!direccionVehiculos.length) cargarDireccionVehiculos();
+        }
+        if (name === "turnos" && !turnos.length && !turnosLoading) {
+            cargarTurnos();
         }
     }
 
@@ -189,63 +213,305 @@
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
         }).addTo(map);
         markersLayer = L.layerGroup().addTo(map);
+        dibujarGeocercas();
     }
 
-    function esListo(row) {
-        const min = row.espera_min;
-        const umbral = (cfg.LISTO_MINUTOS != null) ? cfg.LISTO_MINUTOS : 180;
-        return typeof min === "number" && min >= umbral;
+    function initMapaControles() {
+        const buscar = document.getElementById("mapaBuscarBus");
+        if (buscar) {
+            buscar.addEventListener("input", function () {
+                mapaBusqueda = buscar.value || "";
+                renderMap();
+                if (mapaBusqueda.trim()) ajustarVistaAFiltroDebounced();
+            });
+        }
+        const filtro = document.getElementById("mapaFiltroEstado");
+        if (filtro) {
+            filtro.addEventListener("change", function () {
+                mapaFiltroEstado = filtro.value || "todos";
+                renderMap();
+            });
+        }
+        function alternarFiltroZona(valor) {
+            mapaFiltroZona = (mapaFiltroZona === valor) ? null : valor;
+            document.querySelectorAll(".mini-stat--filtro").forEach(function (e) {
+                e.classList.toggle("activo", e.getAttribute("data-filtro") === mapaFiltroZona);
+            });
+            renderMap();
+            if (mapaFiltroZona) ajustarVistaAFiltro();
+        }
+        document.querySelectorAll(".mini-stat--filtro").forEach(function (el) {
+            el.addEventListener("click", function () {
+                alternarFiltroZona(el.getAttribute("data-filtro"));
+            });
+            el.addEventListener("keydown", function (ev) {
+                if (ev.key === "Enter" || ev.key === " ") {
+                    ev.preventDefault();
+                    alternarFiltroZona(el.getAttribute("data-filtro"));
+                }
+            });
+        });
+    }
+
+    // Dibuja las geocercas configuradas como referencia visual. Solo
+    // informativas: la evaluación de entradas/salidas la hace el backend
+    // (despachosautomaticos), esta web pública no la recalcula.
+    function dibujarGeocercas() {
+        const geocercas = cfg.GEOCERCAS;
+        if (!Array.isArray(geocercas)) return;
+        geocercas.forEach(function (g) {
+            if (!Array.isArray(g.puntos) || !g.puntos.length) return;
+            L.polygon(g.puntos, {
+                color: g.color,
+                weight: 2,
+                dashArray: "6 4",
+                fillColor: g.color,
+                fillOpacity: 0.08,
+            })
+                .addTo(map)
+                .bindPopup(g.etiqueta || g.nombre);
+        });
+    }
+
+    // Ray-casting: true si [lat,lon] está dentro de poligono (array de [lat,lng]).
+    // Mismo algoritmo que usa el backend (app/utils/geo.py::punto_en_poligono).
+    function puntoEnPoligono(lat, lon, poligono) {
+        let dentro = false;
+        for (let i = 0, j = poligono.length - 1; i < poligono.length; j = i++) {
+            const yi = poligono[i][0], xi = poligono[i][1];
+            const yj = poligono[j][0], xj = poligono[j][1];
+            const intersecta = ((yi > lat) !== (yj > lat)) &&
+                (lon < (xj - xi) * (lat - yi) / ((yj - yi) || 1e-9) + xi);
+            if (intersecta) dentro = !dentro;
+        }
+        return dentro;
+    }
+
+    // Cuenta buses (en fila + resto de la flota, sin duplicar) dentro de la
+    // geocerca "patio azul" -- refleja la presencia real, sin importar el
+    // buscador/filtro de estado que solo afecta lo dibujado en el mapa.
+    function contarEnPatioAzul() {
+        const patioAzul = (cfg.GEOCERCAS || []).find(function (g) { return g.nombre === "patio azul"; });
+        if (!patioAzul || !Array.isArray(patioAzul.puntos)) return null;
+
+        const posicionesPorMid = mapaPosicionesPorMid();
+        const idsEnFila = new Set(rows.map(function (r) { return r.vehicle_id; }));
+        const vistos = new Set();
+        let contador = 0;
+
+        rows.forEach(function (row) {
+            if (vistos.has(row.vehicle_id)) return;
+            vistos.add(row.vehicle_id);
+            const fresca = posicionesPorMid[row.vehicle_id];
+            const lat = fresca ? Number(fresca.lat) : Number(row.lat);
+            const lon = fresca ? Number(fresca.lon) : Number(row.lon);
+            if (isFinite(lat) && isFinite(lon) && puntoEnPoligono(lat, lon, patioAzul.puntos)) contador++;
+        });
+
+        posiciones.forEach(function (p) {
+            if (!p.mid || idsEnFila.has(p.mid) || vistos.has(p.mid)) return;
+            vistos.add(p.mid);
+            const lat = Number(p.lat), lon = Number(p.lon);
+            if (isFinite(lat) && isFinite(lon) && puntoEnPoligono(lat, lon, patioAzul.puntos)) contador++;
+        });
+
+        return contador;
+    }
+
+    // Flecha que indica el sentido de marcha real (rumbo GPS 0-360°, tal como
+    // lo reporta sonar_posiciones.course) -- solo se muestra si el bus está
+    // en movimiento, porque parado el rumbo del GPS deja de ser confiable.
+    function direccionArrowHtml(course, speed, modificador) {
+        const mov = estadoMovimiento(speed);
+        const grados = Number(course);
+        if (!mov || mov.cls !== "activo" || !isFinite(grados)) return "";
+        return `<div class="marker-arrow ${modificador}" style="transform:rotate(${grados}deg)"></div>`;
     }
 
     function busMarkerIcon(row) {
-        const cls = esListo(row) ? "bus-marker" : "bus-marker bus-espera";
         const label = escapeHtml(String(row.interno || row.vehicle_id || ""));
+        const flecha = direccionArrowHtml(row._course, row._speed, "marker-arrow--fila");
         return L.divIcon({
             className: "",
-            html: `<div class="${cls}">${label}</div>`,
+            html: `<div class="marker-shell"><div class="bus-marker">${label}</div>${flecha}</div>`,
             iconSize: [36, 36],
             iconAnchor: [18, 18],
         });
     }
 
-    function autoFitMap() {
-        const bounds = [];
-        rows.forEach(function (r) {
-            if (r.lat != null && r.lon != null) {
-                const lat = Number(r.lat), lon = Number(r.lon);
-                if (isFinite(lat) && isFinite(lon)) bounds.push([lat, lon]);
+    function fleetDotIcon(label, course, speed) {
+        const flecha = direccionArrowHtml(course, speed, "marker-arrow--flota");
+        return L.divIcon({
+            className: "",
+            html: `<div class="marker-shell"><div class="fleet-marker">${escapeHtml(String(label || ""))}</div>${flecha}</div>`,
+            iconSize: [28, 28],
+            iconAnchor: [14, 14],
+        });
+    }
+
+    // Actualiza un marcador existente en vez de destruirlo y recrearlo (evita
+    // el parpadeo de todo el mapa en cada refresco de posiciones/turnos).
+    function upsertMarker(store, key, lat, lon, icon, popupContent, zIndexOffset) {
+        let marker = store[key];
+        if (marker) {
+            marker.setLatLng([lat, lon]);
+            marker.setIcon(icon);
+            marker.setPopupContent(popupContent);
+        } else {
+            marker = L.marker([lat, lon], { icon: icon, zIndexOffset: zIndexOffset || 0 });
+            marker.bindPopup(popupContent);
+            marker.addTo(markersLayer);
+            store[key] = marker;
+        }
+        return marker;
+    }
+
+    function removeMarkersNotIn(store, idsVigentes) {
+        Object.keys(store).forEach(function (key) {
+            if (!idsVigentes.has(key)) {
+                markersLayer.removeLayer(store[key]);
+                delete store[key];
             }
         });
-        if (bounds.length) {
-            map.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
-            window._fitDone = true;
-        }
+    }
+
+    // Umbral de velocidad (km/h) para considerar un bus "andando" -- por debajo
+    // se toma como ruido de GPS de un bus parado, no movimiento real (mismo
+    // umbral que ya usa la app de escritorio).
+    const VELOCIDAD_MOVIMIENTO_KMH = 3;
+
+    function mapaPosicionesPorMid() {
+        const mapa = {};
+        posiciones.forEach(function (p) {
+            if (p && p.mid) mapa[p.mid] = p;
+        });
+        return mapa;
+    }
+
+    function estadoMovimiento(speed) {
+        const v = Number(speed);
+        if (!isFinite(v)) return null;
+        return v > VELOCIDAD_MOVIMIENTO_KMH
+            ? { txt: "Andando", cls: "activo" }
+            : { txt: "Detenido", cls: "cancelado" };
+    }
+
+    // Filtros del mapa (buscador de texto + estado andando/detenido). Solo
+    // afectan qué se dibuja en el mapa -- los contadores de otras pestañas
+    // siguen mostrando el total real, sin filtrar.
+    function coincideBusquedaMapa(valores) {
+        const q = mapaBusqueda.trim().toLowerCase();
+        if (!q) return true;
+        return valores.some(function (v) { return v != null && String(v).toLowerCase().includes(q); });
+    }
+
+    function pasaFiltroEstadoMapa(speed) {
+        if (mapaFiltroEstado === "todos") return true;
+        const mov = estadoMovimiento(speed);
+        if (!mov) return false; // sin dato de velocidad: no entra en ningún filtro específico
+        return mapaFiltroEstado === "andando" ? mov.cls === "activo" : mov.cls === "cancelado";
     }
 
     function renderMap() {
         if (!map) return;
-        markersLayer.clearLayers();
-        markersByVehicleId = {};
-        rows.forEach(function (row) {
-            if (row.lat == null || row.lon == null) return;
-            const lat = Number(row.lat);
-            const lon = Number(row.lon);
-            if (!isFinite(lat) || !isFinite(lon)) return;
-            const marker = L.marker([lat, lon], { icon: busMarkerIcon(row) });
-            marker.bindPopup(popupHtml(row));
-            marker.addTo(markersLayer);
-            markersByVehicleId[row.vehicle_id] = marker;
-        });
-        if (!window._fitDone && activeTab === "mapa") {
-            autoFitMap();
+
+        const posicionesPorMid = mapaPosicionesPorMid();
+        const idsEnFila = new Set(rows.map(function (r) { return r.vehicle_id; }));
+        // vehiculossonar es la fuente "correcta" pero hoy está vacía; despachos_realizados
+        // ya tiene el mismo mapeo mid->interno cubriendo toda la flota, así que se usa
+        // como respaldo (y vehiculossonar manda si algún día se llena).
+        const internoPorMid = {};
+        realizados.forEach(function (r) { if (r.vehicle_id && r.interno) internoPorMid[r.vehicle_id] = r.interno; });
+        vehiculos.forEach(function (v) { if (v.mid && v.interno) internoPorMid[v.mid] = v.interno; });
+
+        // Filtro por click en un mini-stat (patio azul / subiendo / bajando). La
+        // dirección viene de direccion_vehiculo_actual (en vivo, running=Y en
+        // Sonar) -- un bus sin entrada ahí no está en camino en ningún sentido
+        // ahora mismo, así que no pasa el filtro subiendo/bajando.
+        const direccionPorMid = direccionVehiculosPorMid();
+        const patioAzulPuntos = ((cfg.GEOCERCAS || []).find(function (g) { return g.nombre === "patio azul"; }) || {}).puntos;
+        function pasaFiltroZonaMapa(mid, lat, lon) {
+            if (!mapaFiltroZona) return true;
+            if (mapaFiltroZona === "patio_azul") {
+                return Array.isArray(patioAzulPuntos) && puntoEnPoligono(lat, lon, patioAzulPuntos);
+            }
+            const dir = direccionPorMid[mid];
+            if (!dir) return false;
+            return mapaFiltroZona === "subiendo" ? dir === "medellin_aeropuerto" : dir === "aeropuerto_medellin";
         }
+
+        // Resto de la flota (de fondo, con zIndex negativo para quedar
+        // siempre debajo de los buses en fila).
+        const idsFlota = new Set();
+        posiciones.forEach(function (p) {
+            if (!p.mid || idsEnFila.has(p.mid)) return;
+            const lat = Number(p.lat), lon = Number(p.lon);
+            if (!isFinite(lat) || !isFinite(lon)) return;
+            const interno = internoPorMid[p.mid];
+            if (!coincideBusquedaMapa([interno, p.plate, p.mid])) return;
+            if (!pasaFiltroEstadoMapa(p.speed)) return;
+            if (!pasaFiltroZonaMapa(p.mid, lat, lon)) return;
+            idsFlota.add(p.mid);
+            const label = interno || p.plate || p.mid;
+            upsertMarker(markersFlotaByMid, p.mid, lat, lon, fleetDotIcon(label, p.course, p.speed), fleetPopupHtml(p, interno), -1000);
+        });
+        removeMarkersNotIn(markersFlotaByMid, idsFlota);
+
+        // Buses en fila: se usa la posición más fresca de sonar_posiciones
+        // cuando está disponible; si no, la que ya trae enturnamiento_actual.
+        const idsFila = new Set();
+        rows.forEach(function (row) {
+            const fresca = posicionesPorMid[row.vehicle_id];
+            row._speed = fresca ? fresca.speed : null;
+            row._course = fresca ? fresca.course : null;
+            if (!coincideBusquedaMapa([row.interno, row.vehicle_id, fresca ? fresca.plate : null])) return;
+            if (!pasaFiltroEstadoMapa(row._speed)) return;
+            let lat = fresca ? Number(fresca.lat) : Number(row.lat);
+            let lon = fresca ? Number(fresca.lon) : Number(row.lon);
+            if (!isFinite(lat) || !isFinite(lon)) {
+                lat = Number(row.lat);
+                lon = Number(row.lon);
+            }
+            if (!isFinite(lat) || !isFinite(lon)) return;
+            if (!pasaFiltroZonaMapa(row.vehicle_id, lat, lon)) return;
+            idsFila.add(row.vehicle_id);
+            upsertMarker(markersByVehicleId, row.vehicle_id, lat, lon, busMarkerIcon(row), popupHtml(row), 0);
+        });
+        removeMarkersNotIn(markersByVehicleId, idsFila);
+
+        const miniPatioAzul = document.getElementById("miniPatioAzul");
+        if (miniPatioAzul) {
+            const enPatioAzul = contarEnPatioAzul();
+            miniPatioAzul.textContent = enPatioAzul == null ? "—" : String(enPatioAzul);
+        }
+    }
+
+    // Centra/hace zoom sobre los marcadores visibles ahora mismo (después de
+    // aplicar buscador y/o filtro de zona) -- se llama solo desde acciones del
+    // usuario (buscar, click en un mini-stat), nunca desde el refresco
+    // periódico, para no mover el mapa mientras el usuario lo está mirando.
+    function ajustarVistaAFiltro() {
+        if (!map) return;
+        const puntos = Object.values(markersByVehicleId)
+            .concat(Object.values(markersFlotaByMid))
+            .map(function (m) { return m.getLatLng(); });
+        if (!puntos.length) return;
+        if (puntos.length === 1) {
+            map.setView(puntos[0], Math.max(map.getZoom(), 16));
+        } else {
+            map.fitBounds(L.latLngBounds(puntos), { padding: [40, 40], maxZoom: 16 });
+        }
+    }
+
+    let mapaFitTimer = null;
+    function ajustarVistaAFiltroDebounced() {
+        if (mapaFitTimer) clearTimeout(mapaFitTimer);
+        mapaFitTimer = setTimeout(ajustarVistaAFiltro, 400);
     }
 
     function popupHtml(row) {
         const hace = humanizeAge(row.llegada_aeropuerto);
-        const listo = esListo(row);
-        const estado = listo ? "LISTO" : "ESPERA";
-        const cls = listo ? "listo" : "espera";
+        const mov = estadoMovimiento(row._speed);
         return `
             <div style="font-size:13px;min-width:180px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
                 <div style="font-weight:900;color:#2b33ff;font-size:16px;margin-bottom:6px;">
@@ -254,8 +520,26 @@
                 <div style="margin-bottom:4px;"><b>${escapeHtml(row.itinerario || "")}</b></div>
                 <div style="margin-bottom:4px;">Posición: <b>#${row._posGrupo ?? "-"}</b></div>
                 <div style="margin-bottom:4px;">Llegada: <b>${escapeHtml(formatHora(row.llegada_aeropuerto))}</b></div>
-                <div style="margin-bottom:6px;color:#6b7280;font-size:12px;">${escapeHtml(hace)}</div>
-                <span class="estado-pill ${cls}">${estado}</span>
+                ${mov ? `<div style="margin-bottom:4px;"><span class="estado-pill ${mov.cls}">${mov.txt}</span></div>` : ""}
+                <div style="color:#6b7280;font-size:12px;">${escapeHtml(hace)}</div>
+            </div>
+        `;
+    }
+
+    function fleetPopupHtml(p, interno) {
+        const hace = humanizeAge(p.updated_at);
+        const velocidad = (typeof p.speed === "number") ? `${p.speed} km/h` : "—";
+        const mov = estadoMovimiento(p.speed);
+        const titulo = interno ? `Bus ${interno}` : (p.plate || p.mid || "");
+        return `
+            <div style="font-size:13px;min-width:170px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+                <div style="font-weight:900;color:#4f46e5;font-size:15px;margin-bottom:2px;">
+                    ${escapeHtml(titulo)}
+                </div>
+                ${interno && p.plate ? `<div style="margin-bottom:4px;color:#6b7280;font-size:12px;">${escapeHtml(p.plate)}</div>` : ""}
+                <div style="margin-bottom:4px;">Velocidad: <b>${escapeHtml(velocidad)}</b> ${mov ? `<span class="estado-pill ${mov.cls}">${mov.txt}</span>` : ""}</div>
+                <div style="margin-bottom:4px;">${escapeHtml(p.address || "")}</div>
+                <div style="color:#6b7280;font-size:12px;">${escapeHtml(hace)}</div>
             </div>
         `;
     }
@@ -263,22 +547,14 @@
     // ============== Stats ==============
     function updateStats() {
         const total = rows.length;
-        const listos = rows.filter(esListo).length;
-        const espera = total - listos;
-
         document.getElementById("statTotal").textContent = String(total);
-        document.getElementById("statListos").textContent = String(listos);
-        document.getElementById("statEspera").textContent = String(espera);
-
         document.getElementById("miniTotal").textContent = String(total);
-        document.getElementById("miniListos").textContent = String(listos);
-        document.getElementById("miniEspera").textContent = String(espera);
-
         document.getElementById("tabListasBadge").textContent = String(total);
     }
 
     // ============== Tabla y chips ==============
     function renderChipsAndTable() {
+        const posicionesPorMid = mapaPosicionesPorMid();
         const grupos = {};
         rows.forEach(function (r) {
             const k = r.itinerario || "Sin itinerario";
@@ -330,16 +606,29 @@
             const items = grupos[itin];
             const filas = items.map(function (r) {
                 const hace = humanizeAge(r.llegada_aeropuerto);
-                const listo = esListo(r);
-                const estadoCls = listo ? "listo" : "espera";
-                const estadoTxt = listo ? "LISTO" : "ESPERA";
+                const fresca = posicionesPorMid[r.vehicle_id];
+                const mov = estadoMovimiento(fresca ? fresca.speed : null);
+                const puesto = puestoPorInterno(r.interno);
                 return `
                     <tr class="bus-row" data-vehicle-id="${escapeHtml(r.vehicle_id || "")}" tabindex="0" role="button" aria-label="Asignar itinerario al bus ${escapeHtml(r.interno || "")}">
                         <td class="pos">${r._posGrupo ?? "-"}</td>
                         <td class="hora">${escapeHtml(formatHora(r.llegada_aeropuerto))}</td>
                         <td class="hace">${escapeHtml(hace)}</td>
                         <td class="interno">${escapeHtml(r.interno || "")}</td>
-                        <td><span class="estado-pill ${estadoCls}">${estadoTxt}</span></td>
+                        <td>${escapeHtml(puesto || "—")}</td>
+                        <td class="col-estado">
+                            ${mov ? `<span class="estado-pill ${mov.cls}">${mov.txt}</span>` : '<span class="estado-vacio">—</span>'}
+                            <button type="button" class="btn-icon-hide" data-action="ocultar"
+                                data-vehicle-id="${escapeHtml(r.vehicle_id || "")}"
+                                data-interno="${escapeHtml(r.interno || "")}"
+                                data-llegada="${escapeHtml(r.llegada_aeropuerto || "")}"
+                                title="Ocultar de la lista" aria-label="Ocultar bus ${escapeHtml(r.interno || "")} de la lista">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                                    <path d="M3 3l18 18M10.58 10.58a2 2 0 002.83 2.83M9.88 4.6A9.77 9.77 0 0112 4.5c5 0 9 4.5 9 7.5a10.6 10.6 0 01-2.16 3.19M6.1 6.1C3.87 7.66 2 9.86 2 12c0 3 4 7.5 9 7.5 1.09 0 2.13-.2 3.09-.56"
+                                        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </button>
+                        </td>
                         <td>
                             <button type="button" class="btn-assign" data-action="assign" data-vehicle-id="${escapeHtml(r.vehicle_id || "")}">
                                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
@@ -364,6 +653,7 @@
                                 <th>Hora</th>
                                 <th>Hace</th>
                                 <th>Bus</th>
+                                <th>Puesto</th>
                                 <th>Estado</th>
                                 <th>Acción</th>
                             </tr>
@@ -389,6 +679,126 @@
                     ev.preventDefault();
                     abrirDesdeFila(tr);
                 }
+            });
+        });
+
+        // Ocultar de la lista: para casos donde Sonar todavía no refleja que el
+        // bus ya no está esperando turno (ej. está andando lejos, sin GPS en el
+        // aeropuerto, sin despacho nuevo). No cancela ni despacha nada -- solo
+        // oculta ESE arribo puntual (vehicle_id + llegada_aeropuerto), así que
+        // si el mismo bus vuelve a llegar de verdad más tarde, sí aparece.
+        tablaBox.querySelectorAll('[data-action="ocultar"]').forEach(function (btn) {
+            btn.addEventListener("click", async function (ev) {
+                ev.stopPropagation();
+                const vid = btn.getAttribute("data-vehicle-id");
+                const interno = btn.getAttribute("data-interno");
+                const llegada = btn.getAttribute("data-llegada");
+                if (!vid) return;
+                const ok = await mostrarConfirmacion({
+                    titulo: "Ocultar de la lista",
+                    mensaje: "Esto solo lo quita de esta lista de espera -- no cancela ni despacha nada en Sonar. Si el bus vuelve a llegar de verdad, aparece de nuevo.",
+                    detalle: `<div><strong>Bus:</strong> ${escapeHtml(interno || vid)}</div>`,
+                    textoConfirmar: "Sí, ocultar",
+                    textoCancelar: "Volver",
+                    tipo: "warn",
+                });
+                if (!ok) return;
+
+                btn.disabled = true;
+                try {
+                    const idOculto = claveOculto(vid, llegada);
+                    const { error } = await client.from(cfg.TABLA_ENTURNAMIENTO_OCULTOS).upsert({
+                        id: idOculto,
+                        vehicle_id: vid,
+                        interno: interno || null,
+                        llegada_aeropuerto: llegada || null,
+                        oculto_por: currentUser?.email || "unknown",
+                    });
+                    if (error) throw error;
+                    ocultos.add(idOculto);
+                    showToast("ok", "Bus ocultado de la lista");
+                    cargarInicial();
+                } catch (err) {
+                    showToast("err", "Error: " + (err.message || err));
+                    btn.disabled = false;
+                }
+            });
+        });
+    }
+
+    // ============== Línea de turno (animada) ==============
+    // Franja horizontal con el orden FIFO real (global, no por itinerario).
+    // Reutiliza el mismo elemento DOM por bus entre renders y usa la técnica
+    // FLIP para animar el reacomodo cuando cambia el orden, en vez de
+    // redibujar todo de golpe.
+    function renderTurnoLine() {
+        const wrap = document.getElementById("turnoLine");
+        if (!wrap) return;
+
+        const ordenados = rows.slice().sort(function (a, b) {
+            return (a.turno || 9999) - (b.turno || 9999);
+        });
+
+        const antes = {};
+        Object.keys(turnoStopEls).forEach(function (vid) {
+            antes[vid] = turnoStopEls[vid].getBoundingClientRect().left;
+        });
+
+        const idsNuevos = new Set(ordenados.map(function (r) { return r.vehicle_id; }));
+        Object.keys(turnoStopEls).forEach(function (vid) {
+            if (!idsNuevos.has(vid)) {
+                turnoStopEls[vid].remove();
+                delete turnoStopEls[vid];
+            }
+        });
+
+        if (!ordenados.length) {
+            wrap.innerHTML = '<div class="turno-empty">Sin buses en fila</div>';
+            turnoStopEls = {};
+            return;
+        }
+        if (wrap.querySelector(".turno-empty")) wrap.innerHTML = "";
+
+        ordenados.forEach(function (row, idx) {
+            const vid = row.vehicle_id;
+            let el = turnoStopEls[vid];
+            if (!el) {
+                el = document.createElement("div");
+                el.className = "turno-stop";
+                el.innerHTML =
+                    '<span class="turno-tag"></span>' +
+                    '<span class="turno-badge"></span>' +
+                    '<span class="turno-wait"></span>';
+                el.addEventListener("click", function () {
+                    const actual = rows.find(function (r) { return r.vehicle_id === vid; });
+                    if (actual) openAssignModal(actual);
+                });
+                turnoStopEls[vid] = el;
+            }
+            el.classList.toggle("next", idx === 0);
+            el.querySelector(".turno-tag").textContent = idx === 0 ? "Próximo" : "";
+            el.querySelector(".turno-badge").textContent = row.interno || vid;
+            el.querySelector(".turno-wait").textContent = humanizeAge(row.llegada_aeropuerto);
+            el.title = row.itinerario || "";
+            wrap.appendChild(el); // reinserta en el orden correcto (mueve si ya estaba)
+        });
+
+        // FLIP: aplicar la posición anterior como transform y soltarla para
+        // que el navegador anime el desplazamiento al lugar nuevo.
+        requestAnimationFrame(function () {
+            Object.keys(turnoStopEls).forEach(function (vid) {
+                const el = turnoStopEls[vid];
+                const anteriorLeft = antes[vid];
+                if (anteriorLeft == null) return; // elemento nuevo, sin animación de movimiento
+                const nuevoLeft = el.getBoundingClientRect().left;
+                const delta = anteriorLeft - nuevoLeft;
+                if (Math.abs(delta) < 1) return;
+                el.style.transition = "none";
+                el.style.transform = `translateX(${delta}px)`;
+                requestAnimationFrame(function () {
+                    el.style.transition = "";
+                    el.style.transform = "";
+                });
             });
         });
     }
@@ -754,6 +1164,7 @@
             .trim();
     }
 
+
     function renderDespachos() {
         const box = document.getElementById("despachosBox");
         const subtitle = document.getElementById("despachosSubtitle");
@@ -826,6 +1237,262 @@
         `;
     }
 
+    // ============== Vuelos (vuelos_mde) ==============
+    function vueloTimestamp(v) {
+        if (v.operation_time) {
+            const t = new Date(v.operation_time).getTime();
+            if (!isNaN(t)) return t;
+        }
+        if (v.fecha) {
+            const hora = String(v.hora || "00:00").trim();
+            const horaCompleta = hora.length === 5 ? hora + ":00" : hora;
+            const t = new Date(`${v.fecha}T${horaCompleta}`).getTime();
+            if (!isNaN(t)) return t;
+        }
+        return Infinity; // sin hora conocida: al final
+    }
+
+    function vueloHora(v) {
+        const ts = vueloTimestamp(v);
+        if (ts === Infinity) return v.hora || "—";
+        return new Date(ts).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    // Códigos reales vistos en vuelos_mde.estado_code (más confiable que
+    // matchear el texto de "estado", que trae tildes).
+    const VUELO_ESTADO_CLASES = {
+        OT: "listo",     // A tiempo
+        LD: "listo",     // Aterrizó
+        DP: "listo",     // Salió
+        BD: "activo",    // Abordando
+        ER: "activo",    // En ruta
+        LC: "activo",    // Último llamado
+        CL: "activo",    // Cerrado (gate cerrado, a punto de salir)
+        DL: "espera",    // Demorado
+        CN: "cancelado", // Cancelado
+        PR: "cancelado", // Programado (gris neutro: todavía no hay novedad)
+    };
+
+    function vueloEstadoPill(v) {
+        const code = String(v.estado_code || "").toUpperCase();
+        const cls = VUELO_ESTADO_CLASES[code] || "cancelado";
+        return { txt: v.estado || v.estado_code || "—", cls: cls };
+    }
+
+    // Ventana alrededor de "ahora": vuelos recién aterrizados (todavía relevantes
+    // para el despacho de buses) hasta un par de horas adelante. Se recalcula en
+    // cada carga, así que se va moviendo sola con el reloj.
+    const VUELOS_VENTANA_ATRAS_MS = 60 * 60 * 1000; // 1h hacia atrás
+    const VUELOS_VENTANA_ADELANTE_MS = 2 * 60 * 60 * 1000; // 2h hacia adelante
+
+    function fechaLocalStr(d) {
+        return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    }
+
+    async function cargarVuelos() {
+        if (vuelosLoading) return;
+        if (!navigator.onLine) {
+            document.getElementById("vuelosBox").innerHTML =
+                '<div class="loading">Sin conexión. Conéctate a internet para ver vuelos.</div>';
+            return;
+        }
+        vuelosLoading = true;
+        const box = document.getElementById("vuelosBox");
+        const subtitle = document.getElementById("vuelosSubtitle");
+        if (subtitle) subtitle.textContent = "Cargando...";
+        try {
+            const ahora = new Date();
+            const desde = new Date(ahora.getTime() - VUELOS_VENTANA_ATRAS_MS);
+            const hasta = new Date(ahora.getTime() + VUELOS_VENTANA_ADELANTE_MS);
+            // La ventana puede cruzar la medianoche (ej. a las 11:30pm, "+2h" ya es
+            // del día siguiente) -- se consultan todas las fechas que toca, no solo
+            // la de hoy, para no perder vuelos ya cruzada la medianoche.
+            const fechas = Array.from(new Set([fechaLocalStr(desde), fechaLocalStr(ahora), fechaLocalStr(hasta)]));
+            const { data, error } = await client
+                .from(cfg.TABLA_VUELOS)
+                .select("*")
+                .eq("tipo", "llegada")
+                .in("fecha", fechas);
+            if (error) throw error;
+            // vuelos_mde es un log de eventos: cada cambio de estado de un vuelo
+            // agrega una fila nueva (mismo "vuelo", distinto operation_time), no
+            // una fila por vuelo. Nos quedamos solo con el estado más reciente de
+            // cada vuelo para mostrar un tablero, no un historial.
+            const masRecientePorVuelo = {};
+            (data || []).forEach(function (v) {
+                // La fecha va en la clave: un mismo número de vuelo se repite día a
+                // día (confirmado en datos reales), y sin la fecha dos ocurrencias
+                // distintas se mezclaban -- la de mañana (con operation_time más
+                // futuro) le ganaba a la de hoy y la sacaba de la ventana visible.
+                const clave = (v.vuelo || v.id) + "|" + (v.fecha || "");
+                const actual = masRecientePorVuelo[clave];
+                if (!actual || vueloTimestamp(v) > vueloTimestamp(actual)) {
+                    masRecientePorVuelo[clave] = v;
+                }
+            });
+            vuelos = Object.values(masRecientePorVuelo)
+                .filter(function (v) {
+                    const ts = vueloTimestamp(v);
+                    return ts >= desde.getTime() && ts <= hasta.getTime();
+                })
+                .sort(function (a, b) { return vueloTimestamp(a) - vueloTimestamp(b); });
+            renderVuelos();
+        } catch (err) {
+            console.error(err);
+            box.innerHTML = `<div class="loading">Error: ${escapeHtml(err.message || String(err))}</div>`;
+            if (subtitle) subtitle.textContent = "Error al cargar";
+        } finally {
+            vuelosLoading = false;
+        }
+    }
+
+    function renderVuelos() {
+        const box = document.getElementById("vuelosBox");
+        const subtitle = document.getElementById("vuelosSubtitle");
+        const badge = document.getElementById("tabVuelosBadge");
+        if (!box) return;
+
+        if (badge) badge.textContent = String(vuelos.length);
+        if (subtitle) subtitle.textContent = `${vuelos.length} vuelos · última hora y próximas 2 horas`;
+
+        if (!vuelos.length) {
+            box.innerHTML = '<div class="loading">No hay vuelos de llegada en este rango de horas</div>';
+            return;
+        }
+
+        const filas = vuelos.map(function (v) {
+            const estado = vueloEstadoPill(v);
+            return `
+                <tr>
+                    <td class="hora">${escapeHtml(vueloHora(v))}</td>
+                    <td class="interno">${escapeHtml(v.vuelo || "—")}</td>
+                    <td>${escapeHtml(v.aerolinea || "—")}</td>
+                    <td>${escapeHtml(v.ciudad || "—")}</td>
+                    <td>${escapeHtml(v.puerta || "—")}</td>
+                    <td><span class="estado-pill ${estado.cls}">${escapeHtml(estado.txt)}</span></td>
+                </tr>
+            `;
+        }).join("");
+
+        box.innerHTML = `
+            <table class="arrivals">
+                <thead>
+                    <tr>
+                        <th>Hora</th>
+                        <th>Vuelo</th>
+                        <th>Aerolínea</th>
+                        <th>Origen</th>
+                        <th>Puerta</th>
+                        <th>Estado</th>
+                    </tr>
+                </thead>
+                <tbody>${filas}</tbody>
+            </table>
+        `;
+    }
+
+    // ============== Turnos (programacion_turnos, solo hoy) ==============
+    function nombrePorDni(dni) {
+        if (!dni) return "";
+        const c = conductores.find(function (x) { return x.cedula && String(x.cedula) === String(dni); });
+        return c ? c.nombre : "";
+    }
+
+    function formatHoraSimple(h) {
+        if (!h) return "—";
+        return String(h).slice(0, 5); // "HH:MM:SS" -> "HH:MM"
+    }
+
+    async function cargarTurnos() {
+        if (turnosLoading) return;
+        if (!navigator.onLine) {
+            document.getElementById("turnosBox").innerHTML =
+                '<div class="loading">Sin conexión. Conéctate a internet para ver los turnos.</div>';
+            return;
+        }
+        turnosLoading = true;
+        const box = document.getElementById("turnosBox");
+        const subtitle = document.getElementById("turnosSubtitle");
+        if (subtitle) subtitle.textContent = "Cargando...";
+        try {
+            if (!conductores.length) await cargarConductores();
+            const hoy = fechaLocalStr(new Date());
+            const { data, error } = await client
+                .from(cfg.TABLA_PROGRAMACION_TURNOS)
+                .select("*")
+                .eq("fecha", hoy)
+                .order("hora_entrada", { ascending: true, nullsFirst: false });
+            if (error) throw error;
+            turnos = data || [];
+            renderTurnos();
+            renderChipsAndTable(); // refresca la columna "Puesto" de Listas si ya estaba pintada
+        } catch (err) {
+            console.error(err);
+            box.innerHTML = `<div class="loading">Error: ${escapeHtml(err.message || String(err))}</div>`;
+            if (subtitle) subtitle.textContent = "Error al cargar";
+        } finally {
+            turnosLoading = false;
+        }
+    }
+
+    function puestoPorInterno(interno) {
+        if (!interno) return "";
+        const t = turnos.find(function (x) {
+            return x.vehiculo && String(x.vehiculo).trim() === String(interno).trim();
+        });
+        return t ? (t.puesto || "") : "";
+    }
+
+    function renderTurnos() {
+        const box = document.getElementById("turnosBox");
+        const subtitle = document.getElementById("turnosSubtitle");
+        const badge = document.getElementById("tabTurnosBadge");
+        if (!box) return;
+
+        if (badge) badge.textContent = String(turnos.length);
+        if (subtitle) subtitle.textContent = `${turnos.length} turnos programados hoy`;
+
+        if (!turnos.length) {
+            box.innerHTML = '<div class="loading">No hay turnos programados para hoy</div>';
+            return;
+        }
+
+        const filas = turnos.map(function (t) {
+            const nombre = nombrePorDni(t.dni);
+            return `
+                <tr>
+                    <td>${escapeHtml(t.turno != null ? String(t.turno) : "—")}</td>
+                    <td class="hora">${escapeHtml(formatHoraSimple(t.hora_entrada))} – ${escapeHtml(formatHoraSimple(t.hora_salida))}</td>
+                    <td>${escapeHtml(nombre || ("DNI " + (t.dni || "—")))}</td>
+                    <td class="interno">${escapeHtml(t.vehiculo || "—")}</td>
+                    <td>${escapeHtml(t.base || "—")}</td>
+                    <td>${escapeHtml(t.puesto || "—")}</td>
+                </tr>
+            `;
+        }).join("");
+
+        box.innerHTML = `
+            <table class="arrivals">
+                <thead>
+                    <tr>
+                        <th>Turno</th>
+                        <th>Horario</th>
+                        <th>Conductor</th>
+                        <th>Vehículo</th>
+                        <th>Base</th>
+                        <th>Puesto</th>
+                    </tr>
+                </thead>
+                <tbody>${filas}</tbody>
+            </table>
+        `;
+    }
+
+    function initTurnosControles() {
+        const btn = document.getElementById("btnRefreshTurnos");
+        if (btn) btn.addEventListener("click", cargarTurnos);
+    }
+
     // ============== Realizados (despachos_realizados) ==============
     async function cargarRealizados() {
         try {
@@ -837,6 +1504,8 @@
             if (error) throw error;
             realizados = data || [];
             renderRealizados();
+            renderSubida();
+            renderMap();
         } catch (err) {
             console.warn("Error cargando realizados:", err);
             const box = document.getElementById("realizadosBox");
@@ -1126,6 +1795,163 @@
         });
     }
 
+    // ============== Listas de subida (despachos_realizados agrupados) ==============
+    function esHoy(fechaIso) {
+        if (!fechaIso) return false;
+        const d = new Date(fechaIso);
+        const ahora = new Date();
+        return d.getFullYear() === ahora.getFullYear() &&
+            d.getMonth() === ahora.getMonth() &&
+            d.getDate() === ahora.getDate();
+    }
+
+    // Conteo en vivo (no derivado de despachos_realizados, que no se actualiza
+    // solo cuando el bus termina el viaje) de "en camino ahora" por dirección e
+    // itinerario -- lo calcula y sincroniza despachosautomaticos cada 2 minutos
+    // desde el despacho más reciente de cada bus en Sonar (running=Y).
+    async function cargarResumenDirecciones() {
+        if (!navigator.onLine) return;
+        try {
+            const { data, error } = await client.from(cfg.TABLA_RESUMEN_DIRECCIONES).select("*");
+            if (error) throw error;
+            resumenDirecciones = data || [];
+            renderResumenDirecciones();
+        } catch (err) {
+            console.warn("Error cargando resumen de direcciones:", err);
+        }
+    }
+
+    // Mismo dato que cargarResumenDirecciones, pero una fila por vehículo --
+    // permite filtrar los marcadores del mapa por dirección (ver mapaFiltroZona).
+    async function cargarDireccionVehiculos() {
+        if (!navigator.onLine) return;
+        try {
+            const { data, error } = await client.from(cfg.TABLA_DIRECCION_VEHICULOS).select("*");
+            if (error) throw error;
+            direccionVehiculos = data || [];
+            renderMap();
+        } catch (err) {
+            console.warn("Error cargando dirección de vehículos:", err);
+        }
+    }
+
+    function direccionVehiculosPorMid() {
+        const mapa = {};
+        direccionVehiculos.forEach(function (r) { if (r.vehicle_id) mapa[r.vehicle_id] = r.direccion; });
+        return mapa;
+    }
+
+    function renderResumenDirecciones() {
+        const subiendo = {};
+        const bajando = {};
+        resumenDirecciones.forEach(function (r) {
+            const itin = r.itinerario || "Sin itinerario";
+            const grupo = r.direccion === "aeropuerto_medellin" ? bajando : subiendo;
+            grupo[itin] = (grupo[itin] || 0) + (r.cantidad || 0);
+        });
+
+        function sumar(grupo) {
+            return Object.keys(grupo).reduce(function (s, k) { return s + grupo[k]; }, 0);
+        }
+        const miniSubiendo = document.getElementById("miniSubiendo");
+        const miniBajando = document.getElementById("miniBajando");
+        if (miniSubiendo) miniSubiendo.textContent = String(sumar(subiendo));
+        if (miniBajando) miniBajando.textContent = String(sumar(bajando));
+
+        const boxes = document.querySelectorAll("[data-resumen-box]");
+        if (!boxes.length) return;
+
+        function renderColumna(titulo, grupo) {
+            const entradas = Object.keys(grupo)
+                .map(function (itin) { return [itin, grupo[itin]]; })
+                .sort(function (a, b) { return b[1] - a[1]; });
+            const total = entradas.reduce(function (s, e) { return s + e[1]; }, 0);
+            const filas = entradas.length
+                ? entradas.map(function (e) {
+                    return `<div class="resumen-fila"><span>${escapeHtml(e[0])}</span><span class="tab-badge">${e[1]}</span></div>`;
+                }).join("")
+                : '<div class="resumen-vacio">Nadie en camino en esta dirección</div>';
+            return `
+                <div class="resumen-col">
+                    <h4>${titulo}<span class="tab-badge">${total}</span></h4>
+                    ${filas}
+                </div>
+            `;
+        }
+
+        const masReciente = resumenDirecciones.reduce(function (max, r) {
+            return r.updated_at && r.updated_at > max ? r.updated_at : max;
+        }, "");
+        const notaTexto = masReciente ? `En vivo · actualizado ${humanizeAge(masReciente)}` : "";
+        document.querySelectorAll("[data-resumen-nota]").forEach(function (nota) {
+            nota.textContent = notaTexto;
+        });
+
+        const html =
+            renderColumna("↑ Subiendo · hacia aeropuerto", subiendo) +
+            renderColumna("↓ Bajando · hacia Medellín", bajando);
+        boxes.forEach(function (box) { box.innerHTML = html; });
+    }
+
+    function renderSubida() {
+        const box = document.getElementById("subidaBox");
+        const subtitle = document.getElementById("subidaSubtitle");
+        const badge = document.getElementById("tabSubidaBadge");
+        if (!box) return;
+
+        const permitidos = new Set((cfg.SUBIDA_ITINERARIOS_PERMITIDOS || []).map(normalizarItinerario));
+        const visibles = realizados.filter(function (r) {
+            return r.estado === "ACTIVO" && esHoy(r.created_at) &&
+                (!permitidos.size || permitidos.has(normalizarItinerario(r.itinerario)));
+        });
+
+        if (badge) badge.textContent = String(visibles.length);
+
+        if (!visibles.length) {
+            if (subtitle) subtitle.textContent = "0 despachos activos hoy";
+            box.innerHTML = '<div class="loading">No hay despachos activos hoy</div>';
+            return;
+        }
+
+        if (subtitle) {
+            subtitle.textContent = `${visibles.length} despachos activos hoy`;
+        }
+
+        // Lista única ordenada por hora descendente (más reciente arriba),
+        // sin separar por itinerario -- ya viene como columna en cada fila.
+        const ordenados = visibles.slice().sort(function (a, b) {
+            return new Date(b.created_at) - new Date(a.created_at);
+        });
+
+        const filas = ordenados.map(function (r) {
+            return `
+                <tr>
+                    <td class="hora">${escapeHtml(formatHora(r.created_at))}</td>
+                    <td class="interno">
+                        ${escapeHtml(r.interno || "")}
+                        ${r.placa ? `<span class="placa-tag">${escapeHtml(r.placa)}</span>` : ""}
+                    </td>
+                    <td>${escapeHtml(r.itinerario || "")}</td>
+                    <td>${r.pasajeros != null ? escapeHtml(String(r.pasajeros)) : "0"}</td>
+                </tr>
+            `;
+        }).join("");
+
+        box.innerHTML = `
+            <table class="arrivals">
+                <thead>
+                    <tr>
+                        <th>Hora</th>
+                        <th>Bus</th>
+                        <th>Itinerario</th>
+                        <th>Pasajeros</th>
+                    </tr>
+                </thead>
+                <tbody>${filas}</tbody>
+            </table>
+        `;
+    }
+
     function initRealizadosControles() {
         const chk = document.getElementById("filterRealizadosActivos");
         if (chk) {
@@ -1165,6 +1991,26 @@
         }
     }
 
+    // ============== Ocultos manuales (enturnamiento_ocultos) ==============
+    // Clave por arribo puntual (no solo por bus): si el mismo vehicle_id vuelve
+    // a llegar de verdad más tarde (nuevo llegada_aeropuerto), ya no coincide
+    // con lo oculto y reaparece solo -- ocultar un caso puntual no destierra al
+    // bus para siempre de la lista.
+    function claveOculto(vehicleId, llegada) {
+        return String(vehicleId || "") + "|" + String(llegada || "");
+    }
+
+    async function cargarOcultos() {
+        if (!navigator.onLine) return;
+        try {
+            const { data, error } = await client.from(cfg.TABLA_ENTURNAMIENTO_OCULTOS).select("id");
+            if (error) throw error;
+            ocultos = new Set((data || []).map(function (r) { return r.id; }));
+        } catch (err) {
+            console.warn("Error cargando ocultos:", err);
+        }
+    }
+
     // ============== Carga inicial + Realtime ==============
     async function cargarInicial() {
         if (!navigator.onLine) {
@@ -1178,9 +2024,12 @@
                 .order("itinerario", { ascending: true })
                 .order("turno", { ascending: true });
             if (error) throw error;
-            rows = data || [];
+            rows = (data || []).filter(function (r) {
+                return !ocultos.has(claveOculto(r.vehicle_id, r.llegada_aeropuerto));
+            });
             updateStats();
             renderChipsAndTable();
+            renderTurnoLine();
             renderMap();
             setLastUpdate();
             reconnectDelay = 2000;
@@ -1193,6 +2042,19 @@
             }
             setConnection(navigator.onLine ? "err" : "offline");
             programarReintento();
+        }
+    }
+
+    async function cargarPosiciones() {
+        if (!navigator.onLine) return;
+        try {
+            const { data, error } = await client.from(cfg.TABLA_POSICIONES).select("*");
+            if (error) throw error;
+            posiciones = data || [];
+            renderMap();
+            renderChipsAndTable();
+        } catch (err) {
+            console.warn("Error cargando posiciones de flota:", err);
         }
     }
 
@@ -1226,6 +2088,7 @@
         reconnectTimer = setTimeout(function () {
             reconnectTimer = null;
             cargarInicial();
+            cargarPosiciones();
             suscribirRealtime();
         }, wait);
     }
@@ -1240,6 +2103,7 @@
             reconnectTimer = null;
         }
         cargarInicial();
+        cargarPosiciones();
         suscribirRealtime();
     });
 
@@ -1251,15 +2115,22 @@
     document.addEventListener("visibilitychange", function () {
         if (document.visibilityState === "visible" && navigator.onLine) {
             cargarInicial();
+            cargarPosiciones();
             if (!realtimeChannel || realtimeChannel.state !== "joined") {
                 suscribirRealtime();
             }
         }
     });
 
+    // Posición de toda la flota: no tiene canal Realtime propio, se refresca por polling.
+    setInterval(function () {
+        if (navigator.onLine) cargarPosiciones();
+    }, 15000);
+
     // Refresca "hace X min" cada minuto sin volver a pedir datos.
     setInterval(function () {
         renderChipsAndTable();
+        renderTurnoLine();
         if (despachos.length) renderDespachos();
     }, 60000);
 
@@ -1267,6 +2138,31 @@
     setInterval(function () {
         if (activeTab === "despachos" && navigator.onLine) cargarDespachos();
     }, 120000);
+
+    // Auto-refresh de vuelos cada minuto si estás en la pestaña
+    setInterval(function () {
+        if (activeTab === "vuelos" && navigator.onLine) cargarVuelos();
+    }, 60000);
+
+    // Auto-refresh de turnos cada minuto si estás en la pestaña (refleja
+    // entrada_ts/salida_ts en vivo a medida que los conductores marcan)
+    setInterval(function () {
+        if (activeTab === "turnos" && navigator.onLine) cargarTurnos();
+    }, 60000);
+
+    // Auto-refresh de ocultos cada minuto (para que si otro operador oculta un
+    // bus, también desaparezca de tu lista sin recargar la página)
+    setInterval(function () {
+        if (navigator.onLine) cargarOcultos().then(cargarInicial);
+    }, 60000);
+
+    // Auto-refresh del resumen de direcciones cada 30s si estás en Mapa o Subida
+    // (el backend lo sincroniza cada 2 min, esto solo evita esperar hasta el
+    // próximo cambio de pestaña para verlo).
+    setInterval(function () {
+        if ((activeTab === "mapa" || activeTab === "subida") && navigator.onLine) cargarResumenDirecciones();
+        if (activeTab === "mapa" && navigator.onLine) cargarDireccionVehiculos();
+    }, 30000);
 
     function initDespachosControles() {
         const btn = document.getElementById("btnRefreshDespachos");
@@ -1278,6 +2174,11 @@
                 renderDespachos();
             });
         }
+    }
+
+    function initVuelosControles() {
+        const btn = document.getElementById("btnRefreshVuelos");
+        if (btn) btn.addEventListener("click", cargarVuelos);
     }
 
     // ============== Despacho manual ==============
@@ -1350,6 +2251,7 @@
                     .map(function (v) {
                         return { mid: v.ID, interno: v.INTERNO, placa: v.Placa };
                     });
+                renderMap();
             } catch (err) {
                 console.warn("Error cargando vehículos:", err);
                 vehiculos = [];
@@ -1789,17 +2691,24 @@
         appStarted = true;
         initTabs();
         initMap();
+        initMapaControles();
         initModal();
         initManualModal();
         initDespachosControles();
         initRealizadosControles();
+        initVuelosControles();
+        initTurnosControles();
         if (navigator.onLine) {
-            cargarInicial();
+            cargarOcultos().then(cargarInicial); // ocultos primero, para no parpadear un bus ya oculto
+            cargarPosiciones();
             suscribirRealtime();
             suscribirRealizadosRealtime();
             cargarRealizados();
             cargarVehiculos();
             cargarConductores();
+            cargarResumenDirecciones();
+            cargarDireccionVehiculos();
+            cargarTurnos();
         } else {
             setConnection("offline");
         }

@@ -70,7 +70,7 @@ window.APP_CONFIG = {
     SUPABASE_URL: "https://TU-PROYECTO.supabase.co",
     SUPABASE_ANON_KEY: "tu_anon_key",
     TABLA: "enturnamiento_actual",
-    LISTO_MINUTOS: 180,
+    TABLA_POSICIONES: "sonar_posiciones",
     MAP_CENTER: { lat: 6.170989, lng: -75.431152 },
     MAP_ZOOM: 14,
 };

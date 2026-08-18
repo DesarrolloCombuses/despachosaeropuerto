@@ -359,14 +359,29 @@ button {
     background: var(--gray-100);
 }
 
-.map-floating-stats {
+.map-overlay-top {
     position: absolute;
     top: 16px;
     left: 16px;
     right: 16px;
     z-index: 401;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+}
+
+.map-overlay-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.map-floating-stats {
+    display: flex;
+    flex-wrap: wrap;
     gap: 10px;
     pointer-events: none;
     max-width: 640px;
@@ -412,6 +427,88 @@ button {
     color: var(--warning-600);
 }
 
+/* Mini-stats que además sirven de filtro del mapa al hacer click (patio azul,
+   subiendo, bajando) -- se distinguen con un borde de acento cuando están
+   activos, mismo trato en todos los tamaños de pantalla. */
+.mini-stat--filtro {
+    cursor: pointer;
+    user-select: none;
+    transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+.mini-stat--filtro:hover {
+    border-color: var(--primary-500);
+}
+
+.mini-stat--filtro.activo {
+    border-color: var(--primary-600);
+    box-shadow: 0 0 0 2px var(--primary-100), var(--shadow-md);
+}
+
+.mini-stat--filtro.activo .mini-num {
+    color: var(--primary-600);
+}
+
+.map-search-panel {
+    display: flex;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px;
+    box-shadow: var(--shadow-md);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    pointer-events: auto;
+    max-width: 100%;
+}
+
+.map-search-input {
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: 13px;
+    width: 190px;
+    max-width: 100%;
+}
+
+.map-search-input:focus {
+    outline: none;
+    border-color: var(--primary-600);
+    box-shadow: 0 0 0 3px var(--primary-100);
+}
+
+.map-filter-select {
+    height: 32px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+@media (max-width: 640px) {
+    .map-overlay-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .map-floating-stats {
+        max-width: none;
+    }
+    .map-search-panel {
+        max-width: none;
+    }
+    .map-search-input {
+        flex: 1;
+        width: auto;
+    }
+}
+
 /* ============== PANE LISTAS ============== */
 #paneListas {
     background: var(--bg);
@@ -419,9 +516,126 @@ button {
     gap: 16px;
 }
 
+/* ============== LÍNEA DE TURNO ============== */
+.turno-section {
+    flex-shrink: 0;
+}
+
+.turno-heading {
+    margin: 0 0 10px;
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+}
+
+.turno-line-wrap {
+    overflow-x: auto;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xs);
+    scrollbar-width: thin;
+}
+
+.turno-line {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    gap: 26px;
+    padding: 26px 20px 16px;
+    width: max-content;
+    min-width: 100%;
+}
+
+.turno-line::before {
+    content: "";
+    position: absolute;
+    left: 20px;
+    right: 20px;
+    top: 46px;
+    height: 2px;
+    background: var(--border);
+    z-index: 0;
+}
+
+.turno-empty {
+    padding: 18px 20px;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.turno-stop {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+    width: 46px;
+    cursor: pointer;
+    transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.turno-tag {
+    height: 11px;
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--warning-600);
+}
+
+.turno-badge {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    border: 2px solid var(--border-strong);
+    color: var(--text);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    font-family: var(--font-sans);
+    transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.turno-stop.next .turno-badge {
+    background: var(--warning-500);
+    border-color: var(--warning-500);
+    color: #fff;
+    animation: turnoPulse 1.8s ease-out infinite;
+}
+
+.turno-wait {
+    font-size: 10px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+@keyframes turnoPulse {
+    0% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.45); }
+    70% { box-shadow: 0 0 0 9px rgba(245, 158, 11, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .turno-stop {
+        transition: none;
+    }
+    .turno-stop.next .turno-badge {
+        animation: none;
+    }
+}
+
 .stats {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    display: flex;
     gap: 12px;
     flex-shrink: 0;
 }
@@ -430,7 +644,7 @@ button {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    padding: 18px 14px;
+    padding: 18px 24px;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -726,8 +940,9 @@ table.arrivals td.hace {
 }
 
 /* ============== BUS MARKER ============== */
+/* Buses en fila (tabla enturnamiento_actual) — se destacan sobre el resto de la flota. */
 .bus-marker {
-    background: var(--success-500);
+    background: var(--warning-500);
     color: #fff;
     border: 2px solid #fff;
     border-radius: var(--radius-full);
@@ -751,8 +966,62 @@ table.arrivals td.hace {
     z-index: 1000;
 }
 
-.bus-marker.bus-espera {
-    background: var(--warning-500);
+/* Resto de la flota (tabla sonar_posiciones) — con su interno, en un color
+   distinto al de los buses en fila para no confundirlos. */
+.fleet-marker {
+    background: var(--primary-500);
+    color: #fff;
+    border: 2px solid #fff;
+    border-radius: var(--radius-full);
+    box-shadow: 0 2px 6px rgba(16, 24, 40, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 10px;
+    min-width: 28px;
+    height: 28px;
+    padding: 0 6px;
+    transition: transform var(--transition);
+    letter-spacing: -0.01em;
+    font-variant-numeric: tabular-nums;
+    font-family: var(--font-sans);
+}
+
+.fleet-marker:hover {
+    transform: scale(1.25);
+    z-index: 900;
+}
+
+/* Contenedor que permite superponer la flecha de rumbo sin achicar la
+   burbuja del interno (la flecha "orbita" el borde del círculo). */
+.marker-shell {
+    position: relative;
+    width: 100%;
+    height: 100%;
+}
+
+.marker-arrow {
+    position: absolute;
+    top: -9px;
+    left: 50%;
+    margin-left: -6px;
+    width: 0;
+    height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-bottom: 9px solid #1e293b;
+    filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.35));
+    pointer-events: none;
+}
+
+.marker-arrow--fila {
+    transform-origin: 6px 27px;
+}
+
+.marker-arrow--flota {
+    top: -8px;
+    transform-origin: 6px 22px;
 }
 
 /* ============== LEAFLET POPUP OVERRIDES ============== */
@@ -822,10 +1091,12 @@ table.arrivals td.hace {
         width: 16px;
         height: 16px;
     }
-    .map-floating-stats {
+    .map-overlay-top {
         top: 12px;
         left: 12px;
         right: 12px;
+    }
+    .map-floating-stats {
         gap: 6px;
     }
     .mini-stat {
@@ -1059,6 +1330,61 @@ table.arrivals td.hace {
     padding: 0;
 }
 
+.resumen-direcciones {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.resumen-col {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xs);
+    padding: 12px 14px;
+    min-width: 0;
+}
+
+.resumen-col h4 {
+    margin: 0 0 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.01em;
+}
+
+.resumen-fila {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 0;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.resumen-fila:first-of-type {
+    border-top: none;
+}
+
+.resumen-vacio {
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 6px 0;
+}
+
+@media (max-width: 640px) {
+    .resumen-direcciones {
+        grid-template-columns: 1fr;
+    }
+}
+
 .despachos-box table.arrivals {
     border: none;
 }
@@ -1174,6 +1500,48 @@ table.arrivals td.hace {
 
 .btn-assign:active {
     transform: scale(0.98);
+}
+
+.col-estado {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.estado-vacio {
+    color: var(--text-muted);
+}
+
+.btn-icon-hide {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+.btn-icon-hide:hover {
+    background: var(--error-50);
+    border-color: var(--error-500);
+    color: var(--error-600);
+}
+
+.btn-icon-hide:active {
+    transform: scale(0.95);
+}
+
+.btn-icon-hide:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 /* === Modal === */

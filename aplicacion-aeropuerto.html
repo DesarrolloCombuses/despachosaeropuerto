@@ -135,16 +135,86 @@
             <span>Despachos</span>
             <span id="tabDespachosBadge" class="tab-badge">0</span>
         </button>
+        <button class="tab" data-tab="vuelos" role="tab" aria-selected="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill="currentColor"/>
+            </svg>
+            <span>Vuelos</span>
+            <span id="tabVuelosBadge" class="tab-badge">0</span>
+        </button>
+        <button class="tab" data-tab="subida" role="tab" aria-selected="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" fill="currentColor"/>
+                <path d="M2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Subida</span>
+            <span id="tabSubidaBadge" class="tab-badge">0</span>
+        </button>
+        <button class="tab" data-tab="turnos" role="tab" aria-selected="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 7v5l3.5 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Turnos</span>
+            <span id="tabTurnosBadge" class="tab-badge">0</span>
+        </button>
     </nav>
 
     <main class="main">
         <section id="paneMapa" class="pane active" role="tabpanel">
-            <div class="map-floating-stats">
-                <div class="mini-stat"><span id="miniTotal" class="mini-num">0</span><span class="mini-lbl">Buses</span></div>
-                <div class="mini-stat ok"><span id="miniListos" class="mini-num">0</span><span class="mini-lbl">Listos</span></div>
-                <div class="mini-stat warn"><span id="miniEspera" class="mini-num">0</span><span class="mini-lbl">Espera</span></div>
+            <div class="map-overlay-top">
+                <div class="map-overlay-row">
+                    <div class="map-floating-stats">
+                        <div class="mini-stat"><span id="miniTotal" class="mini-num">0</span><span class="mini-lbl">En fila</span></div>
+                        <div class="mini-stat mini-stat--filtro" data-filtro="patio_azul" role="button" tabindex="0"><span id="miniPatioAzul" class="mini-num">0</span><span class="mini-lbl">Patio azul</span></div>
+                        <div class="mini-stat mini-stat--filtro" data-filtro="subiendo" role="button" tabindex="0"><span id="miniSubiendo" class="mini-num">0</span><span class="mini-lbl">↑ Subiendo</span></div>
+                        <div class="mini-stat mini-stat--filtro" data-filtro="bajando" role="button" tabindex="0"><span id="miniBajando" class="mini-num">0</span><span class="mini-lbl">↓ Bajando</span></div>
+                    </div>
+                    <div class="map-search-panel">
+                        <input type="search" id="mapaBuscarBus" class="map-search-input" placeholder="Buscar bus (interno, placa)..." autocomplete="off">
+                        <select id="mapaFiltroEstado" class="map-filter-select">
+                            <option value="todos">Todos</option>
+                            <option value="andando">Andando</option>
+                            <option value="detenido">Detenido</option>
+                        </select>
+                    </div>
+                </div>
             </div>
             <div id="map"></div>
+        </section>
+
+        <section id="paneSubida" class="pane" role="tabpanel">
+            <div class="despachos-head">
+                <div class="despachos-titles">
+                    <h2>Listas de subida</h2>
+                    <div id="subidaSubtitle" class="despachos-subtitle">Cargando...</div>
+                </div>
+            </div>
+            <div data-resumen-nota class="despachos-subtitle"></div>
+            <div data-resumen-box class="resumen-direcciones"></div>
+            <div id="subidaBox" class="tabla-box">
+                <div class="loading">Cargando listas de subida...</div>
+            </div>
+        </section>
+
+        <section id="paneTurnos" class="pane" role="tabpanel">
+            <div class="despachos-head">
+                <div class="despachos-titles">
+                    <h2>Programación de turnos</h2>
+                    <div id="turnosSubtitle" class="despachos-subtitle">Cargando...</div>
+                </div>
+                <div class="despachos-actions">
+                    <button id="btnRefreshTurnos" class="btn btn-ghost btn-small" type="button">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                            <path d="M4 4v6h6M20 20v-6h-6M20 8a8 8 0 10-2 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Refrescar
+                    </button>
+                </div>
+            </div>
+            <div id="turnosBox" class="tabla-box despachos-box">
+                <div class="loading">Cargando turnos...</div>
+            </div>
         </section>
 
         <section id="paneRealizados" class="pane" role="tabpanel">
@@ -196,19 +266,38 @@
             </div>
         </section>
 
+        <section id="paneVuelos" class="pane" role="tabpanel">
+            <div class="despachos-head">
+                <div class="despachos-titles">
+                    <h2>Vuelos de llegada</h2>
+                    <div id="vuelosSubtitle" class="despachos-subtitle">Cargando...</div>
+                </div>
+                <div class="despachos-actions">
+                    <button id="btnRefreshVuelos" class="btn btn-ghost btn-small" type="button">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                            <path d="M4 4v6h6M20 20v-6h-6M20 8a8 8 0 10-2 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Refrescar
+                    </button>
+                </div>
+            </div>
+            <div id="vuelosBox" class="tabla-box despachos-box">
+                <div class="loading">Cargando vuelos...</div>
+            </div>
+        </section>
+
         <section id="paneListas" class="pane" role="tabpanel">
+            <div class="turno-section">
+                <h2 class="turno-heading">Línea de turno</h2>
+                <div class="turno-line-wrap">
+                    <div class="turno-line" id="turnoLine"></div>
+                </div>
+            </div>
+
             <div class="stats">
                 <div class="stat">
                     <span id="statTotal" class="stat-num">0</span>
-                    <span class="stat-lbl">Total</span>
-                </div>
-                <div class="stat ok">
-                    <span id="statListos" class="stat-num">0</span>
-                    <span class="stat-lbl">Listos</span>
-                </div>
-                <div class="stat warn">
-                    <span id="statEspera" class="stat-num">0</span>
-                    <span class="stat-lbl">Espera</span>
+                    <span class="stat-lbl">Esperando turno</span>
                 </div>
             </div>
 
@@ -221,7 +310,7 @@
     </main>
 
     <footer class="foot">
-        <span>Posición FIFO por itinerario · "Listo" tras 3 h de espera en el aeropuerto</span>
+        <span>Turno FIFO corroborado con GPS · el mapa muestra la flota completa en vivo</span>
         <span id="appVersion" class="app-version">—</span>
     </footer>
 
