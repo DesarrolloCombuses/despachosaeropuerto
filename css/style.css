@@ -262,6 +262,9 @@ button {
     padding: 0 24px;
     gap: 4px;
     position: relative;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
 }
 
 .tab {
@@ -280,6 +283,8 @@ button {
     position: relative;
     transition: color var(--transition);
     border-radius: 0;
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .tab:hover {
