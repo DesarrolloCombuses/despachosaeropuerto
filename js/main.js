@@ -5,7 +5,11 @@
     // ============== Service Worker (PWA) ==============
     if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
-            navigator.serviceWorker.register("./sw.js")
+            // updateViaCache:"none" evita que el navegador use su caché HTTP normal
+            // (GitHub Pages sirve sw.js con Cache-Control: max-age=600) para decidir
+            // si hay un service worker nuevo -- sin esto, una actualización recién
+            // publicada puede tardar hasta 10 min en siquiera notarse.
+            navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" })
                 .then(function (reg) {
                     console.log("[PWA] Service Worker registrado", reg.scope);
 
