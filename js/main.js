@@ -261,9 +261,8 @@
     // informativas: la evaluación de entradas/salidas la hace el backend
     // (despachosautomaticos), esta web pública no la recalcula.
     function dibujarGeocercas() {
-        const geocercas = cfg.GEOCERCAS;
-        if (!Array.isArray(geocercas)) return;
-        geocercas.forEach(function (g) {
+        const viejas = L.layerGroup();
+        (cfg.GEOCERCAS || []).forEach(function (g) {
             if (!Array.isArray(g.puntos) || !g.puntos.length) return;
             L.polygon(g.puntos, {
                 color: g.color,
@@ -271,10 +270,69 @@
                 dashArray: "6 4",
                 fillColor: g.color,
                 fillOpacity: 0.08,
-            })
-                .addTo(map)
-                .bindPopup(g.etiqueta || g.nombre);
+            }).bindPopup(g.etiqueta || g.nombre).addTo(viejas);
         });
+        viejas.addTo(map);
+
+        // El mapa del programa de enturnes, con su misma forma de
+        // mostrar las cosas. Por cada punto de llegada van tres capas:
+        //
+        //   1. la RAYA de llegada (o el circulo, donde no hay raya): lo que el bus
+        //      tiene que cruzar para entrar a la fila;
+        //   2. el circulo de espera: si se aleja de ahi mas de 30 min, pierde el turno;
+        //   3. una ETIQUETA con el nombre, del color del punto.
+        //
+        // La etiqueta es lo importante para poder verlo: las zonas son chiquitas
+        // (Patio Azul mide 119 metros) y alejado el mapa no se ven, pero la etiqueta
+        // se ve siempre, a cualquier acercamiento.
+        const nuevas = L.layerGroup();
+
+        (cfg.PUNTOS_ENTURNES || []).forEach(function (p) {
+            // El circulo de espera, punteado y casi transparente: es referencia, no estorbo.
+            L.circle([p.lat, p.lon], {
+                radius: p.zona_m, color: p.color, weight: 1,
+                dashArray: "6 6", fillOpacity: 0.03,
+            }).bindTooltip("Zona de espera de " + escapeHtml(p.nombre) + " · " + p.zona_m + " m")
+              .addTo(nuevas);
+
+            // La raya de llegada, gruesa: es la que decide.
+            if (Array.isArray(p.linea) && p.linea.length === 2) {
+                L.polyline(p.linea, { color: p.color, weight: 8, opacity: 0.9 })
+                    .bindTooltip("Raya de llegada de " + escapeHtml(p.nombre))
+                    .addTo(nuevas);
+            } else if (p.radio_m) {
+                L.circle([p.lat, p.lon], {
+                    radius: p.radio_m, color: p.color, weight: 3, fillOpacity: 0.15,
+                }).bindTooltip("Llegada a " + escapeHtml(p.nombre)).addTo(nuevas);
+            }
+
+            // La etiqueta con el nombre.
+            L.marker([p.lat, p.lon], {
+                interactive: false,
+                icon: L.divIcon({
+                    className: "etiqueta-punto",
+                    html: '<span style="background:' + p.color + '">' + escapeHtml(p.nombre) + "</span>",
+                    iconSize: null,
+                }),
+            }).addTo(nuevas);
+        });
+
+        // Las zonas dibujadas a mano, del color de su punto.
+        (cfg.ZONAS_ENTURNES || []).forEach(function (z) {
+            if (!Array.isArray(z.puntos) || !z.puntos.length) return;
+            L.polygon(z.puntos, {
+                color: z.color, weight: 3, fillColor: z.color, fillOpacity: 0.14,
+            }).bindPopup("<strong>" + escapeHtml(z.nombre) + "</strong><br>Zona dibujada de " +
+                         escapeHtml(z.punto || "")).addTo(nuevas);
+        });
+
+        if ((cfg.PUNTOS_ENTURNES || []).length || (cfg.ZONAS_ENTURNES || []).length) {
+            nuevas.addTo(map);
+            L.control.layers(null, {
+                "Puntos y zonas del programa": nuevas,
+                "Geocercas de antes": viejas,
+            }, { collapsed: false, position: "topright" }).addTo(map);
+        }
     }
 
     // Ray-casting: true si [lat,lon] está dentro de poligono (array de [lat,lng]).
@@ -808,10 +866,57 @@
     }
 
     // ============== Modal asignar itinerario ==============
+
+    // El conductor del despacho.
+    //
+    // El número que trae la fila (driver_id) es el ID del conductor EN SONAR,
+    // no la cédula, aunque se le parezca: el 735 sale con 61254297 y ese es el
+    // ID. Con la lista de conductores se traduce a nombre, para que el
+    // despachador vea a quién está despachando y no un número pelado.
+    function conductorPorDrId(drId) {
+        const d = String(drId == null ? "" : drId).trim();
+        if (!d) return null;
+        return conductores.find(function (c) {
+            return String(c.dr_id || "").trim() === d;
+        }) || null;
+    }
+
     function openAssignModal(row) {
         const modal = document.getElementById("assignModal");
         document.getElementById("assignBus").textContent = row.interno || row.vehicle_id || "—";
-        document.getElementById("assignDriver").textContent = row.driver_id || "—";
+
+        // --- Conductor -------------------------------------------------
+        // El número que trae la fila (driver_id) es el ID del conductor EN
+        // SONAR, no la cédula, aunque se le parezca: el 735 sale con 61254297
+        // y ese es el ID. Con la hoja de conductores se traduce a nombre, para
+        // que el despachador vea a quién despacha y no un número pelado.
+        //
+        // Si Sonar no sabe quién va manejando (el conductor no se conectó en
+        // el equipo del bus), desde aquí NO se despacha: se manda al despacho
+        // manual, que es donde se escoge el conductor a mano.
+        // Ojo con el "0": Sonar dice 0 cuando nadie se conectó. Nuestra fila ya
+        // lo deja vacío, pero el 0 es justo lo que se coló 116 veces en los
+        // despachos por la tabla vieja, donde sí llegaba como texto "0".
+        let drvFila = String(row.driver_id || "").trim();
+        if (drvFila === "0") drvFila = "";
+        const quien = conductorPorDrId(drvFila);
+        const estatico = document.getElementById("assignDriver");
+        const sinConductor = document.getElementById("assignSinConductor");
+        const botonAsignar = document.getElementById("assignSubmit");
+        if (drvFila) {
+            estatico.hidden = false;
+            estatico.textContent = quien ? (quien.nombre + " · ID " + drvFila) : drvFila;
+            sinConductor.hidden = true;
+            botonAsignar.hidden = false;
+        } else {
+            estatico.hidden = true;
+            sinConductor.hidden = false;
+            botonAsignar.hidden = true;   // sin conductor no hay nada que asignar
+        }
+        // El botón de abajo necesita saber de qué bus se trata.
+        document.getElementById("assignIrManual").dataset.interno =
+            String(row.interno || "");
+
         const select = document.getElementById("assignItin");
         const EXCLUIDOS = ["4413", "3385"]; // Aeropuerto-Exposiciones, Aeropuerto-San Diego-Tunel
         const itins = (cfg.ITINERARIOS || []).filter(function (i) {
@@ -828,7 +933,7 @@
         document.getElementById("assignObs").value = "";
         document.getElementById("assignError").hidden = true;
         document.getElementById("assignSubmit").dataset.vehicleId = row.vehicle_id || "";
-        document.getElementById("assignSubmit").dataset.driverId = row.driver_id || "";
+        document.getElementById("assignSubmit").dataset.driverId = drvFila;
         modal.hidden = false;
     }
 
@@ -841,7 +946,7 @@
         const submitBtn = document.getElementById("assignSubmit");
         const errorBox = document.getElementById("assignError");
         const mId = submitBtn.dataset.vehicleId;
-        const drvId = submitBtn.dataset.driverId;
+        const drvId = String(submitBtn.dataset.driverId || "").trim();
         const itinerary = document.getElementById("assignItin").value;
         const observaciones = document.getElementById("assignObs").value.trim();
 
@@ -856,7 +961,7 @@
             return;
         }
         if (!drvId) {
-            errorBox.textContent = "Este bus no tiene conductor registrado.";
+            errorBox.textContent = "Este bus no trae conductor. Use Despacho manual.";
             errorBox.hidden = false;
             return;
         }
@@ -866,7 +971,10 @@
         const itinObj = (cfg.ITINERARIOS || []).find(function (i) { return i.id === itinerary; });
 
         // Confirmación previa al envío a Sonar
-        const driverNombre = document.getElementById("assignDriver")?.textContent || "—";
+        const resuelto = conductorPorDrId(drvId);
+        const driverNombre = resuelto
+            ? (resuelto.nombre + " · ID " + drvId)
+            : (document.getElementById("assignDriver")?.textContent || drvId || "—");
         const detalleHtml = `
             <div><strong>Bus:</strong> ${escapeHtml(row?.interno || mId)}</div>
             <div><strong>Conductor:</strong> ${escapeHtml(driverNombre)}</div>
@@ -947,6 +1055,28 @@
             if (ev.key === "Escape" && !modal.hidden) closeAssignModal();
         });
         document.getElementById("assignForm").addEventListener("submit", submitAssign);
+
+        // Botón "Ir a despacho manual": cierra este modal y abre el otro ya
+        // con el bus puesto, para no volver a escribirlo. Los dos ofrecen los
+        // mismos tres itinerarios del aeropuerto, así que no se pierde nada.
+        const irManual = document.getElementById("assignIrManual");
+        if (irManual) {
+            irManual.addEventListener("click", async function () {
+                const interno = irManual.dataset.interno || "";
+                closeAssignModal();
+                const tareas = [];
+                if (!vehiculos.length) tareas.push(cargarVehiculos());
+                if (!conductores.length) tareas.push(cargarConductores());
+                if (tareas.length) await Promise.all(tareas);
+                abrirManualModal();
+                if (interno) {
+                    document.getElementById("manualInterno").value = interno;
+                    actualizarCamposVehiculo();
+                    // El foco va al conductor, que es lo único que falta.
+                    document.getElementById("manualConductor").focus();
+                }
+            });
+        }
     }
 
     // ============== Toast ==============
@@ -1053,7 +1183,7 @@
         if (!iso) return "";
         const d = new Date(iso);
         if (isNaN(d.getTime())) return String(iso);
-        return d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        return d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
     }
 
     function humanizeAge(iso) {
@@ -1089,7 +1219,7 @@
     }
 
     function setLastUpdate() {
-        document.getElementById("lastUpdate").textContent = new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+        document.getElementById("lastUpdate").textContent = new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", hour12: false });
     }
 
     // ============== Despachos ==============
@@ -1259,7 +1389,7 @@
     function vueloHora(v) {
         const ts = vueloTimestamp(v);
         if (ts === Infinity) return v.hora || "—";
-        return new Date(ts).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+        return new Date(ts).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", hour12: false });
     }
 
     // Códigos reales vistos en vuelos_mde.estado_code (más confiable que
@@ -2022,9 +2152,13 @@
             return;
         }
         try {
-            const { data, error } = await client
-                .from(cfg.TABLA)
-                .select("*")
+            // La tabla nueva (enturne_filas) guarda las filas de TODOS
+            // los puntos -- aeropuerto, Almacentro, Nutibara... Esta pantalla es solo la
+            // del aeropuerto, asi que se pide nada mas ese punto. Si cfg.SOLO_PUNTO no
+            // esta puesto (la tabla vieja), pide todo como siempre.
+            let consulta = client.from(cfg.TABLA).select("*");
+            if (cfg.SOLO_PUNTO) consulta = consulta.eq("punto", cfg.SOLO_PUNTO);
+            const { data, error } = await consulta
                 .order("itinerario", { ascending: true })
                 .order("turno", { ascending: true });
             if (error) throw error;

@@ -1,0 +1,27 @@
+/* ============================================================================
+   Cuando el bus llega sin conductor
+   ----------------------------------------------------------------------------
+   Casi siempre Sonar ya sabe quién va manejando y el modal solo lo muestra
+   (ahora con el nombre, no con el ID pelado).
+
+   Pero si el conductor no se conectó en el equipo del bus, no hay a quién
+   asignarle el viaje. Antes eso salía como un error seco al oprimir Asignar;
+   ahora se avisa de una vez y se ofrece el camino: el despacho manual.
+
+   Archivo aparte: quitando la línea que lo carga, queda todo como estaba.
+   ========================================================================== */
+
+.aviso-sin-conductor {
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    color: #92400e;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    margin-bottom: 10px;
+}
+
+#assignIrManual {
+    width: 100%;
+}

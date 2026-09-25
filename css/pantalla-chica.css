@@ -1,0 +1,152 @@
+/* ============================================================================
+   Ajustes para pantalla chica
+   ----------------------------------------------------------------------------
+   Archivo aparte a propósito: no toca style.css. Para devolverse, basta quitar
+   la línea que lo carga en aplicacion-aeropuerto.html.
+
+   Todo va dentro de media queries, así que en pantalla grande no cambia nada.
+   ========================================================================== */
+
+
+/* ---------------------------------------------------------------- hasta 700px
+   Tablet en vertical y teléfonos grandes. */
+@media (max-width: 700px) {
+
+    /* La franja de arriba ocupaba dos renglones altos con el título largo. */
+    .topbar {
+        padding: 10px 12px;
+        gap: 8px;
+    }
+    .topbar-titles h1 {
+        font-size: 16px;
+    }
+    .topbar-titles .subtitle {
+        display: none;            /* "Combuses · Monitoreo en vivo": no aporta acá */
+    }
+
+    /* Las pestañas ya se deslizan; se les quita aire para que quepan más. */
+    .tabs {
+        padding: 0 12px;
+    }
+    .tab {
+        font-size: 13px;
+        padding: 12px 2px;
+        margin-right: 16px;
+    }
+
+    /* El marco de las listas se comía 40px de ancho en márgenes. */
+    #paneListas {
+        padding: 10px;
+        gap: 10px;
+    }
+    .tabla-box {
+        padding: 2px;
+    }
+    .turno-heading {
+        font-size: 14px;
+        margin-bottom: 6px;
+    }
+}
+
+
+/* ---------------------------------------------------------------- hasta 560px
+   Teléfono. Aquí la tabla de siete columnas es lo que se ve feo: se aprieta
+   tanto que las palabras se parten en tres renglones. */
+@media (max-width: 560px) {
+
+    table.arrivals {
+        font-size: 12px;
+    }
+    table.arrivals th,
+    table.arrivals td {
+        padding-left: 6px;
+        padding-right: 6px;
+    }
+
+    /* Se esconde la columna PUESTO (quinta). Es el puesto programado del
+       conductor -- "TERMINAL DEL NORTE", "NUTIBARA-EXPOSICIONES" -- el texto más
+       largo de la tabla y el que menos se necesita para despachar. Sigue estando
+       en la pestaña Turnos. */
+    table.arrivals th:nth-child(5),
+    table.arrivals td:nth-child(5) {
+        display: none;
+    }
+
+    /* El número de turno y el bus son lo que uno busca de lejos. */
+    table.arrivals td.pos {
+        font-weight: 700;
+    }
+    table.arrivals td.interno {
+        font-size: 15px;
+        font-weight: 700;
+    }
+
+    /* "hace 1 h 21 min" partido en tres renglones se ve pésimo. */
+    table.arrivals td.hace,
+    table.arrivals td.hora {
+        white-space: nowrap;
+    }
+
+    /* El botón de asignar: sin texto largo ni padding de escritorio. */
+    table.arrivals td:last-child .btn,
+    table.arrivals td:last-child button {
+        padding: 6px 10px;
+        font-size: 12px;
+        white-space: nowrap;
+    }
+
+    /* El encabezado de cada itinerario se salía por el nombre largo. */
+    .itin-head {
+        font-size: 13px;
+        padding: 10px 10px;
+        gap: 6px;
+    }
+
+    /* Los chips de itinerario: que quepan dos por renglón en vez de uno. */
+    .chip {
+        font-size: 12px;
+        padding: 6px 10px;
+    }
+}
+
+
+/* ---------------------------------------------------------------- hasta 430px
+   Teléfono angosto. Se quita también la hora exacta: para el turno lo que
+   importa es cuánto lleva esperando, y las dos juntas no caben. */
+@media (max-width: 430px) {
+
+    table.arrivals th:nth-child(2),
+    table.arrivals td:nth-child(2) {
+        display: none;
+    }
+
+    table.arrivals th,
+    table.arrivals td {
+        padding-left: 4px;
+        padding-right: 4px;
+    }
+
+    .topbar-titles h1 {
+        font-size: 15px;
+    }
+}
+
+
+/* ------------------------------------------------- pantalla baja (horizontal)
+   Un teléfono acostado deja 350px de alto: el mapa se quedaba sin espacio y la
+   lista quedaba en una rendija. */
+@media (max-height: 520px) and (orientation: landscape) {
+
+    .topbar {
+        padding: 6px 12px;
+    }
+    .topbar-titles .subtitle {
+        display: none;
+    }
+    .tab {
+        padding: 8px 2px;
+    }
+    .turno-section {
+        display: none;        /* la línea de turno se repite en la tabla */
+    }
+}
