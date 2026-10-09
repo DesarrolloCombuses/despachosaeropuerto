@@ -62,9 +62,15 @@ const TILE_HOSTS = [
 self.addEventListener("install", (event) => {
     event.waitUntil(
         Promise.all([
-            // App shell mismo origen
+            // App shell mismo origen. cache:"reload" va directo al servidor sin
+            // pasar por la caché HTTP del navegador: GitHub Pages manda
+            // max-age=600, y sin esto el SW nuevo podía guardar el main.js y el
+            // config.js VIEJOS -- la app seguía en la versión anterior aunque
+            // ya estuviera publicada la nueva.
             caches.open(CACHE_APP).then((cache) =>
-                Promise.allSettled(APP_SHELL.map((url) => cache.add(url)))
+                Promise.allSettled(APP_SHELL.map((url) =>
+                    cache.add(new Request(url, { cache: "reload" }))
+                ))
             ),
             // CDN externos (no rompe install si alguno falla)
             caches.open(CACHE_CDN).then((cache) =>

@@ -2,6 +2,10 @@
 (function () {
     "use strict";
 
+    // Operaciones contra Sonar que no se pueden cortar a la mitad (ver
+    // recargarCuandoSeaSeguro). Va aquí arriba porque el SW la consulta.
+    let operacionesEnCurso = 0;
+
     // ============== Service Worker (PWA) ==============
     if ("serviceWorker" in navigator) {
         window.addEventListener("load", function () {
@@ -37,15 +41,35 @@
                             reg.update().catch(function () { /* sin red, ignorar */ });
                         }
                     });
+                    // Y cada 3 minutos: la pantalla del despachador se queda
+                    // abierta y visible todo el día, sin recargar ni cambiar de
+                    // pestaña, así que nunca se enteraba de una versión nueva.
+                    setInterval(function () {
+                        reg.update().catch(function () { /* sin red, ignorar */ });
+                    }, 3 * 60 * 1000);
                 })
                 .catch(function (err) { console.warn("[PWA] SW falló:", err); });
             // Cuando el SW activo cambia (auto-update), recargamos una vez
             navigator.serviceWorker.addEventListener("controllerchange", function () {
                 if (window._actualizandoSW) return;
                 window._actualizandoSW = true;
-                window.location.reload();
+                recargarCuandoSeaSeguro();
             });
         });
+    }
+
+    // La recarga por versión nueva es obligatoria, pero no en mitad de un
+    // despacho: si Sonar ya aceptó la orden y la página se recarga antes de
+    // guardarla en despachos_realizados, el despacho queda sin registro. Con una
+    // ventana abierta (asignar, despacho manual, confirmación) o una operación
+    // en curso, se espera y se vuelve a intentar.
+    function recargarCuandoSeaSeguro() {
+        const ventanaAbierta = document.querySelector(".modal-backdrop:not([hidden])");
+        if (ventanaAbierta || operacionesEnCurso > 0) {
+            setTimeout(recargarCuandoSeaSeguro, 2000);
+            return;
+        }
+        window.location.reload();
     }
 
     function mostrarBannerActualizar(worker) {
@@ -1902,6 +1926,9 @@
 
                 btn.disabled = true;
                 btn.textContent = "Cancelando...";
+                // Aquí ya no hay ventana abierta que frene una recarga por
+                // versión nueva (Asignar y Despacho manual sí la tienen).
+                operacionesEnCurso++;
                 try {
                     const resp = await fetch(cfg.SONAR_CANCEL_URL, {
                         method: "POST",
@@ -1935,6 +1962,8 @@
                     showToast("err", "Error: " + (err.message || err));
                     btn.disabled = false;
                     btn.textContent = "Cancelar";
+                } finally {
+                    operacionesEnCurso--;
                 }
             });
         });
