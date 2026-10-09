@@ -208,10 +208,13 @@
 
     // ============== Mapa ==============
     function initMap() {
-        map = L.map("map", { zoomControl: true }).setView(
+        // El zoom va abajo a la derecha: en su sitio de siempre (arriba a la
+        // izquierda) tapaba el contador "En fila" de la franja de arriba.
+        map = L.map("map", { zoomControl: false }).setView(
             [cfg.MAP_CENTER.lat, cfg.MAP_CENTER.lng],
             cfg.MAP_ZOOM
         );
+        L.control.zoom({ position: "bottomright" }).addTo(map);
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             maxZoom: 19,
             attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
@@ -328,10 +331,11 @@
 
         if ((cfg.PUNTOS_ENTURNES || []).length || (cfg.ZONAS_ENTURNES || []).length) {
             nuevas.addTo(map);
+            // Abajo a la izquierda: arriba a la derecha tapaba el buscador de buses.
             L.control.layers(null, {
                 "Puntos y zonas del programa": nuevas,
                 "Geocercas de antes": viejas,
-            }, { collapsed: false, position: "topright" }).addTo(map);
+            }, { collapsed: false, position: "bottomleft" }).addTo(map);
         }
     }
 
@@ -442,6 +446,13 @@
     // umbral que ya usa la app de escritorio).
     const VELOCIDAD_MOVIMIENTO_KMH = 3;
 
+    // Qué valor de "direccion" (resumen_direcciones_actual y
+    // direccion_vehiculo_actual) es SUBIENDO y cuál BAJANDO, como se dice en la
+    // operación: subir es ir hacia Medellín. Ojo, es al revés de lo que sugiere
+    // el nombre del valor. Contadores, filtro del mapa y resumen leen de aquí.
+    const DIRECCION_SUBIENDO = "aeropuerto_medellin";
+    const DIRECCION_BAJANDO = "medellin_aeropuerto";
+
     function mapaPosicionesPorMid() {
         const mapa = {};
         posiciones.forEach(function (p) {
@@ -499,7 +510,7 @@
             }
             const dir = direccionPorMid[mid];
             if (!dir) return false;
-            return mapaFiltroZona === "subiendo" ? dir === "medellin_aeropuerto" : dir === "aeropuerto_medellin";
+            return mapaFiltroZona === "subiendo" ? dir === DIRECCION_SUBIENDO : dir === DIRECCION_BAJANDO;
         }
 
         // Resto de la flota (de fondo, con zIndex negativo para quedar
@@ -1980,7 +1991,7 @@
         const bajando = {};
         resumenDirecciones.forEach(function (r) {
             const itin = r.itinerario || "Sin itinerario";
-            const grupo = r.direccion === "aeropuerto_medellin" ? bajando : subiendo;
+            const grupo = r.direccion === DIRECCION_SUBIENDO ? subiendo : bajando;
             grupo[itin] = (grupo[itin] || 0) + (r.cantidad || 0);
         });
 
@@ -2022,8 +2033,8 @@
         });
 
         const html =
-            renderColumna("↑ Subiendo · hacia aeropuerto", subiendo) +
-            renderColumna("↓ Bajando · hacia Medellín", bajando);
+            renderColumna("↑ Subiendo · hacia Medellín", subiendo) +
+            renderColumna("↓ Bajando · hacia aeropuerto", bajando);
         boxes.forEach(function (box) { box.innerHTML = html; });
     }
 

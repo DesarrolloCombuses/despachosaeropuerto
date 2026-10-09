@@ -31,8 +31,8 @@
     }
 }
 
-/* El interruptor de capas, arriba a la derecha: que no tape los botones del
-   mapa y que se lea con el mismo tipo de letra del resto. */
+/* El interruptor de capas, abajo a la izquierda: que no tape los contadores ni
+   el buscador de arriba y que se lea con el mismo tipo de letra del resto. */
 .leaflet-control-layers-expanded {
     font: 500 12.5px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
     padding: 8px 10px;
