@@ -146,7 +146,7 @@
     let selectedItin = null; // null = todos
     let mapaBusqueda = ""; // filtro de texto del mapa (interno/placa/mid)
     let mapaFiltroEstado = "todos"; // "todos" | "andando" | "detenido"
-    let mapaFiltroZona = null; // null | "patio_azul" | "subiendo" | "bajando" -- click en un mini-stat
+    let mapaFiltroZona = null; // null | "patio_azul" | "subiendo" | "bajando" | "punto:Almacentro"... -- click en un mini-stat
     let map = null;
     let markersLayer = null;
     let markersByVehicleId = {}; // buses en fila
@@ -274,8 +274,14 @@
                 e.classList.toggle("activo", e.getAttribute("data-filtro") === mapaFiltroZona);
             });
             renderMap();
-            if (mapaFiltroZona) ajustarVistaAFiltro();
+            if (!mapaFiltroZona) return;
+            // El tablero de un punto lleva el mapa a ese punto (los que vienen quedan
+            // marcados por la carretera, al alejar el mapa se ven).
+            const punto = puntoDeFiltro(mapaFiltroZona);
+            if (punto) verPunto(punto);
+            else ajustarVistaAFiltro();
         }
+        crearTablerosPuntos();
         document.querySelectorAll(".mini-stat--filtro").forEach(function (el) {
             el.addEventListener("click", function () {
                 alternarFiltroZona(el.getAttribute("data-filtro"));
@@ -501,6 +507,7 @@
             sinArrancarSubiendo: 0, sinArrancarBajando: 0,
             detalleSubiendo: [], restoAeropuerto: [],
             internosPatio: new Set(), internosSubiendo: new Set(), internosBajando: new Set(),
+            porPunto: {}, // Almacentro, Nutibara...: su renglón, más los internos de los que están y los que vienen
         };
         puntosAhora.forEach(function (r) {
             const buses = r.buses || {};
@@ -521,9 +528,78 @@
                 c.sinArrancarSubiendo += r.vienen_sin_arrancar || 0;
                 if (r.vienen) c.detalleSubiendo.push(r.punto + " " + r.vienen);
                 (buses.vienen || []).forEach(function (b) { c.internosSubiendo.add(String(b.interno)); });
+                c.porPunto[r.punto] = Object.assign({}, r, {
+                    internos: new Set((buses.estan || []).concat(buses.vienen || [])
+                        .map(function (b) { return String(b.interno); })),
+                });
             }
         });
         return c;
+    }
+
+    // Los puntos de Medellín (todos menos el Aeropuerto), de sur a norte como en la
+    // cuenta del programa. El filtro del mapa de cada tablero es "punto:<nombre>".
+    const FILTRO_PUNTO = "punto:";
+    const PUNTOS_DE_ABAJO = (cfg.PUNTOS_ENTURNES || [])
+        .filter(function (p) { return p.nombre !== "Aeropuerto"; })
+        .sort(function (a, b) { return a.lat - b.lat; });
+    function puntoDeFiltro(filtro) {
+        if (!filtro || filtro.indexOf(FILTRO_PUNTO) !== 0) return null;
+        const nombre = filtro.slice(FILTRO_PUNTO.length);
+        return PUNTOS_DE_ABAJO.find(function (p) { return p.nombre === nombre; }) || null;
+    }
+
+    function crearTablerosPuntos() {
+        const caja = document.getElementById("miniPuntos");
+        if (!caja) return;
+        caja.innerHTML = PUNTOS_DE_ABAJO.map(function (p) {
+            return '<div class="mini-stat mini-stat--filtro mini-stat--punto" role="button" tabindex="0"' +
+                ' data-filtro="' + escapeHtml(FILTRO_PUNTO + p.nombre) + '" style="--color-punto:' + escapeHtml(p.color) + '">' +
+                '<span class="mini-num">…</span>' +
+                '<span class="mini-lbl">' + escapeHtml(p.nombre) + '<span class="mini-sub">…</span></span></div>';
+        }).join("");
+    }
+
+    // Lleva el mapa al punto, con su zona entera a la vista y sin que la tapen los tableros.
+    function verPunto(p) {
+        if (!map) return;
+        const tapa = (document.querySelector(".map-overlay-top") || {}).offsetHeight || 0;
+        map.fitBounds(L.latLng(p.lat, p.lon).toBounds(2 * (p.zona_m || 350)), {
+            paddingTopLeft: [20, tapa + 30], paddingBottomRight: [20, 20], maxZoom: 17,
+        });
+    }
+
+    // Cada tablero de punto: el número grande son los que están en el punto, debajo los
+    // que vienen por la carretera. Sin la cuenta del programa no hay de dónde sacarlos.
+    function actualizarTablerosPuntos(c) {
+        document.querySelectorAll(".mini-stat--punto").forEach(function (el) {
+            const p = puntoDeFiltro(el.getAttribute("data-filtro"));
+            const num = el.querySelector(".mini-num");
+            const sub = el.querySelector(".mini-sub");
+            if (!p || !num || !sub) return;
+            const r = c && c.porPunto[p.nombre];
+            if (!r) {
+                if (!puntosIntentado) return;
+                num.textContent = "—";
+                sub.textContent = "sin dato";
+                el.title = "El programa no ha publicado en los últimos " +
+                    Math.round((cfg.PUNTOS_VIEJO_SEG || 180) / 60) + " minutos: no hay cuenta de " + p.nombre + ".";
+                return;
+            }
+            const vienen = r.vienen || 0;
+            num.textContent = String(r.estan || 0);
+            sub.textContent = "↑ " + vienen + (vienen === 1 ? " viene" : " vienen");
+            const zonas = Object.keys(r.por_zona || {})
+                .filter(function (z) { return r.por_zona[z]; })
+                .map(function (z) { return z + " " + r.por_zona[z]; });
+            const n = r.vienen_sin_arrancar || 0;
+            el.title = `En ${p.nombre} ahora: ${r.estan || 0}` +
+                (zonas.length ? ` (${zonas.join(" · ")})` : "") +
+                ` · en fila: ${r.en_fila || 0} · ya despachados hacia otro punto: ${r.por_salir || 0}. ` +
+                `Por la carretera hacia acá: ${vienen}` +
+                (n ? ` · además ${n} despachado${n === 1 ? "" : "s"} que todavía no arranca${n === 1 ? "" : "n"} de otro punto` : "") +
+                `. Dato del programa de las ${formatHora(c.foto)}. Tóquelo para ver estos buses en el mapa.`;
+        });
     }
 
     // Los tres contadores del mapa que dependen de la cuenta del programa. El número de
@@ -533,6 +609,7 @@
         const sube = document.getElementById("miniSubiendo");
         const baja = document.getElementById("miniBajando");
         const c = cuentaDelPrograma();
+        actualizarTablerosPuntos(c);
         if (c) {
             const dato = "Dato del programa de las " + formatHora(c.foto);
             const ademas = function (n) {
@@ -631,12 +708,18 @@
         const cuenta = cuentaDelPrograma();
         const direccionPorMid = direccionVehiculosPorMid();
         const patioAzulPuntos = ((cfg.GEOCERCAS || []).find(function (g) { return g.nombre === "patio azul"; }) || {}).puntos;
+        const puntoFiltro = puntoDeFiltro(mapaFiltroZona);
         function pasaFiltroZonaMapa(mid, lat, lon, interno) {
             if (!mapaFiltroZona) return true;
             if (cuenta) {
-                const lista = mapaFiltroZona === "patio_azul" ? cuenta.internosPatio
+                const lista = puntoFiltro ? (cuenta.porPunto[puntoFiltro.nombre] || {}).internos
+                    : mapaFiltroZona === "patio_azul" ? cuenta.internosPatio
                     : mapaFiltroZona === "subiendo" ? cuenta.internosSubiendo : cuenta.internosBajando;
-                return interno != null && lista.has(String(interno));
+                return interno != null && !!lista && lista.has(String(interno));
+            }
+            // Sin la cuenta: los que están cerca del punto (dentro de su zona de llegada).
+            if (puntoFiltro) {
+                return L.latLng(lat, lon).distanceTo([puntoFiltro.lat, puntoFiltro.lon]) <= (puntoFiltro.zona_m || 350);
             }
             if (mapaFiltroZona === "patio_azul") {
                 return Array.isArray(patioAzulPuntos) && puntoEnPoligono(lat, lon, patioAzulPuntos);

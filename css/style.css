@@ -459,6 +459,28 @@ button {
     color: var(--primary-600);
 }
 
+/* Los tableros de los puntos de Medellín: una raya del color del punto (el mismo
+   de su etiqueta en el mapa) y, debajo del nombre, cuántos vienen. */
+.mini-stat--punto,
+.mini-stat--punto:hover,
+.mini-stat--punto.activo {
+    border-left: 4px solid var(--color-punto, var(--border));
+}
+
+.mini-stat--punto .mini-lbl {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.mini-sub {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
 .map-search-panel {
     display: flex;
     gap: 8px;
@@ -1116,6 +1138,9 @@ table.arrivals td.hace {
         font-size: 18px;
     }
     .mini-lbl {
+        font-size: 10px;
+    }
+    .mini-sub {
         font-size: 10px;
     }
     #paneListas {
