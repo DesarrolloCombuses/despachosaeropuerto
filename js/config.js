@@ -5,7 +5,7 @@
 // backend autenticado puede insertar/actualizar/borrar).
 window.APP_CONFIG = {
     // Versión visible de la app — debe coincidir con sw.js
-    APP_VERSION: "v1.26.1",
+    APP_VERSION: "v1.27.0",
     SUPABASE_URL: "https://cbplebkmxrkaafqdhiyi.supabase.co",
     SUPABASE_ANON_KEY: "sb_publishable_DZCceNTENY4ViP17-eZrGg_bdMElZ9X",
     // ===========================================================
@@ -47,6 +47,16 @@ window.APP_CONFIG = {
     // Mismo cálculo que TABLA_RESUMEN_DIRECCIONES, pero una fila por vehículo --
     // permite filtrar los marcadores del mapa por dirección (subiendo/bajando).
     TABLA_DIRECCION_VEHICULOS: "direccion_vehiculo_actual",
+    // La cuenta de los buses en cada punto que publica el programa de la tarjeta
+    // (en el PC de la oficina) cada 30 s: cuántos vienen por la carretera hacia cada
+    // punto, cuántos están en él y en qué zona (Patio Azul...). De aquí salen los
+    // contadores del mapa (Patio azul, Subiendo, Bajando) y su filtro. Si el dato
+    // tiene más de PUNTOS_VIEJO_SEG, se vuelve a contar como antes.
+    TABLA_PUNTOS: "puntos_ahora",
+    PUNTOS_VIEJO_SEG: 180,
+    // Los 51 buses con su interno (lo publica el programa de enturnes), para que el
+    // filtro del mapa encuentre a cada bus que cuenta el programa.
+    TABLA_FLOTA: "enturne_flota",
     // Programación de turnos de conductores (quién, en qué vehículo, base y
     // puesto le corresponde cada día) -- se consulta solo el día actual.
     TABLA_PROGRAMACION_TURNOS: "programacion_turnos",
@@ -100,9 +110,10 @@ window.APP_CONFIG = {
     ],
     // Las zonas DIBUJADAS a mano (enturnes/zonas.json, version 5). Cuando el GPS
     // no alcanza a ver el cruce de la raya, entrar a una de estas cuenta como llegada.
-    // Van del color del punto al que pertenecen.
+    // Van del color del punto al que pertenecen. Patio Azul es el de la version 6
+    // (el grande): es el mismo con que el programa cuenta "Patio azul".
     ZONAS_ENTURNES: [
-        { nombre: "Patio Azul", punto: "Aeropuerto", color: "#7c3aed", puntos: [[6.170869, -75.43202], [6.170869, -75.430948], [6.171548, -75.430948], [6.171548, -75.43202]] },
+        { nombre: "Patio Azul", punto: "Aeropuerto", color: "#7c3aed", puntos: [[6.170826, -75.43202], [6.170826, -75.430365], [6.172042, -75.430365], [6.172042, -75.43202]] },
         { nombre: "Lazo de llegadas", punto: "Aeropuerto", color: "#7c3aed", puntos: [[6.170656, -75.431521], [6.170388, -75.431293], [6.170208, -75.430953], [6.170164, -75.430705], [6.170256, -75.430208], [6.17044, -75.429447], [6.17053, -75.429089], [6.170623, -75.428731], [6.17071, -75.42842], [6.170855, -75.428169], [6.171076, -75.428001], [6.171334, -75.427935], [6.171577, -75.427969], [6.171805, -75.428108], [6.171985, -75.428302], [6.172098, -75.428641], [6.172441, -75.428524], [6.172299, -75.428123], [6.172035, -75.427829], [6.171699, -75.427629], [6.171312, -75.427574], [6.170917, -75.427676], [6.170584, -75.427929], [6.170377, -75.428278], [6.170274, -75.428637], [6.17018, -75.429], [6.170089, -75.429361], [6.169903, -75.430132], [6.169803, -75.430687], [6.169869, -75.431078], [6.170102, -75.431514], [6.170419, -75.431794]] },
         { nombre: "Almacentro (borrador)", punto: "Almacentro", color: "#0d9488", puntos: [[6.2355, -75.5719], [6.2373, -75.5719], [6.2373, -75.57], [6.2355, -75.57]] },
         { nombre: "Nutibara", punto: "Nutibara", color: "#ea580c", puntos: [[6.253536, -75.566974], [6.253109, -75.566196], [6.252272, -75.566775], [6.252693, -75.567387]] },
@@ -156,8 +167,9 @@ window.APP_CONFIG = {
             nombre: "patio azul",
             etiqueta: "Patio azul · zona de parqueo/espera junto a la terminal",
             color: "#2563eb",
+            // El Patio Azul grande (zonas.json version 6), el mismo con que cuenta el programa.
             puntos: [
-                [6.170869, -75.43202], [6.170869, -75.430948], [6.171548, -75.430948], [6.171548, -75.43202],
+                [6.170826, -75.43202], [6.170826, -75.430365], [6.172042, -75.430365], [6.172042, -75.43202],
             ],
         },
     ],

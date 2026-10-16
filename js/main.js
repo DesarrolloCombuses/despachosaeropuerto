@@ -173,6 +173,10 @@
     let vuelosLoading = false;
     let resumenDirecciones = []; // en vivo, desde resumen_direcciones_actual
     let direccionVehiculos = []; // en vivo, desde direccion_vehiculo_actual (una fila por bus)
+    let puntosAhora = []; // en vivo, desde puntos_ahora: la cuenta del programa por punto (vienen / están)
+    let puntosIntentado = false; // ya se pidió puntos_ahora una vez (antes, los contadores no muestran el respaldo)
+    let internosFlota = {}; // mid -> interno de los 51 buses (enturne_flota), para el filtro del mapa
+    let sumasDirecciones = null; // { subiendo, bajando } de resumen_direcciones_actual: respaldo de los contadores
     let turnos = []; // programación de HOY, desde programacion_turnos
     let turnosLoading = false;
     const CANCEL_WINDOW_MS = 60 * 60 * 1000; // 1 hora
@@ -218,6 +222,7 @@
             if (!resumenDirecciones.length) cargarResumenDirecciones();
         }
         if (name === "mapa") {
+            cargarPuntos();
             if (!resumenDirecciones.length) cargarResumenDirecciones();
             if (!direccionVehiculos.length) cargarDireccionVehiculos();
         }
@@ -477,6 +482,101 @@
     const DIRECCION_SUBIENDO = "aeropuerto_medellin";
     const DIRECCION_BAJANDO = "medellin_aeropuerto";
 
+    // La cuenta del programa (puntos_ahora): cada 30 s publica, por punto, cuántos
+    // buses vienen por la carretera y cuántos están en él (y en qué zona). Aquí subir
+    // es ir hacia Medellín: los que vienen a un punto de abajo (Almacentro, Nutibara,
+    // Exposiciones, Terminal Norte) van SUBIENDO y los que vienen al Aeropuerto van
+    // BAJANDO. Si el dato tiene más de cfg.PUNTOS_VIEJO_SEG (el programa no está
+    // publicando), devuelve null y los contadores vuelven a la cuenta de antes.
+    const ZONA_PATIO = "Patio Azul";
+    function cuentaDelPrograma() {
+        if (!puntosAhora.length) return null;
+        const foto = puntosAhora.reduce(function (max, r) {
+            return r.foto_en && r.foto_en > max ? r.foto_en : max;
+        }, "");
+        const edadSeg = foto ? (Date.now() - new Date(foto).getTime()) / 1000 : Infinity;
+        if (!(edadSeg <= (cfg.PUNTOS_VIEJO_SEG || 180))) return null;
+        const c = {
+            foto: foto, patio: 0, subiendo: 0, bajando: 0,
+            sinArrancarSubiendo: 0, sinArrancarBajando: 0,
+            detalleSubiendo: [], restoAeropuerto: [],
+            internosPatio: new Set(), internosSubiendo: new Set(), internosBajando: new Set(),
+        };
+        puntosAhora.forEach(function (r) {
+            const buses = r.buses || {};
+            if (r.sentido === "sube") {          // vienen al Aeropuerto: BAJANDO
+                c.bajando += r.vienen || 0;
+                c.sinArrancarBajando += r.vienen_sin_arrancar || 0;
+                (buses.vienen || []).forEach(function (b) { c.internosBajando.add(String(b.interno)); });
+                const zonas = r.por_zona || {};
+                c.patio = zonas[ZONA_PATIO] || 0;
+                (buses.estan || []).forEach(function (b) {
+                    if (b.zona === ZONA_PATIO) c.internosPatio.add(String(b.interno));
+                });
+                Object.keys(zonas).forEach(function (z) {
+                    if (z !== ZONA_PATIO && zonas[z]) c.restoAeropuerto.push(z + " " + zonas[z]);
+                });
+            } else if (r.sentido === "baja") {   // vienen a un punto de abajo: SUBIENDO
+                c.subiendo += r.vienen || 0;
+                c.sinArrancarSubiendo += r.vienen_sin_arrancar || 0;
+                if (r.vienen) c.detalleSubiendo.push(r.punto + " " + r.vienen);
+                (buses.vienen || []).forEach(function (b) { c.internosSubiendo.add(String(b.interno)); });
+            }
+        });
+        return c;
+    }
+
+    // Los tres contadores del mapa que dependen de la cuenta del programa. El número de
+    // "En fila" no cambia: sigue saliendo de la fila del aeropuerto (updateStats).
+    function actualizarMiniStats() {
+        const patio = document.getElementById("miniPatioAzul");
+        const sube = document.getElementById("miniSubiendo");
+        const baja = document.getElementById("miniBajando");
+        const c = cuentaDelPrograma();
+        if (c) {
+            const dato = "Dato del programa de las " + formatHora(c.foto);
+            const ademas = function (n) {
+                return n ? ` · además ${n} despachado${n === 1 ? "" : "s"} que todavía no arranca${n === 1 ? "" : "n"} de otro punto` : "";
+            };
+            if (patio) {
+                patio.textContent = String(c.patio);
+                patio.parentElement.title = `En Patio Azul ahora: ${c.patio}` +
+                    (c.restoAeropuerto.length ? ` · en el resto del aeropuerto: ${c.restoAeropuerto.join(", ")}` : "") +
+                    `. ${dato}.`;
+            }
+            if (sube) {
+                sube.textContent = String(c.subiendo);
+                sube.parentElement.title = "Por la carretera hacia Medellín: " +
+                    (c.detalleSubiendo.length ? c.detalleSubiendo.join(" · ") : "ninguno") +
+                    ademas(c.sinArrancarSubiendo) + `. ${dato}.`;
+            }
+            if (baja) {
+                baja.textContent = String(c.bajando);
+                baja.parentElement.title = `Por la carretera hacia el aeropuerto: ${c.bajando}` +
+                    ademas(c.sinArrancarBajando) + `. ${dato}.`;
+            }
+            return;
+        }
+        // Mientras llega la primera respuesta, nada: si no, al abrir se vería un instante la cuenta vieja.
+        if (!puntosIntentado) return;
+        // Respaldo: el programa no ha publicado en los últimos minutos.
+        const respaldo = "Cuenta de respaldo: el programa no ha publicado en los últimos " +
+            Math.round((cfg.PUNTOS_VIEJO_SEG || 180) / 60) + " minutos.";
+        if (patio) {
+            const enPatioAzul = contarEnPatioAzul();
+            patio.textContent = enPatioAzul == null ? "—" : String(enPatioAzul);
+            patio.parentElement.title = respaldo;
+        }
+        if (sube) {
+            sube.textContent = sumasDirecciones ? String(sumasDirecciones.subiendo) : "—";
+            sube.parentElement.title = respaldo;
+        }
+        if (baja) {
+            baja.textContent = sumasDirecciones ? String(sumasDirecciones.bajando) : "—";
+            baja.parentElement.title = respaldo;
+        }
+    }
+
     function mapaPosicionesPorMid() {
         const mapa = {};
         posiciones.forEach(function (p) {
@@ -517,18 +617,27 @@
         // vehiculossonar es la fuente "correcta" pero hoy está vacía; despachos_realizados
         // ya tiene el mismo mapeo mid->interno cubriendo toda la flota, así que se usa
         // como respaldo (y vehiculossonar manda si algún día se llena).
+        // enturne_flota (los 51 buses del programa) va en medio: tiene a todos, también a
+        // los que no han tenido despacho hoy.
         const internoPorMid = {};
         realizados.forEach(function (r) { if (r.vehicle_id && r.interno) internoPorMid[r.vehicle_id] = r.interno; });
+        Object.keys(internosFlota).forEach(function (mid) { internoPorMid[mid] = internosFlota[mid]; });
         vehiculos.forEach(function (v) { if (v.mid && v.interno) internoPorMid[v.mid] = v.interno; });
 
-        // Filtro por click en un mini-stat (patio azul / subiendo / bajando). La
-        // dirección viene de direccion_vehiculo_actual (en vivo, running=Y en
-        // Sonar) -- un bus sin entrada ahí no está en camino en ningún sentido
-        // ahora mismo, así que no pasa el filtro subiendo/bajando.
+        // Filtro por click en un mini-stat (patio azul / subiendo / bajando). Muestra
+        // justo los buses que cuenta el programa en ese contador (puntos_ahora). Si el
+        // programa no está publicando, se filtra como antes: la dirección de
+        // direccion_vehiculo_actual (running=Y en Sonar) y el Patio Azul dibujado.
+        const cuenta = cuentaDelPrograma();
         const direccionPorMid = direccionVehiculosPorMid();
         const patioAzulPuntos = ((cfg.GEOCERCAS || []).find(function (g) { return g.nombre === "patio azul"; }) || {}).puntos;
-        function pasaFiltroZonaMapa(mid, lat, lon) {
+        function pasaFiltroZonaMapa(mid, lat, lon, interno) {
             if (!mapaFiltroZona) return true;
+            if (cuenta) {
+                const lista = mapaFiltroZona === "patio_azul" ? cuenta.internosPatio
+                    : mapaFiltroZona === "subiendo" ? cuenta.internosSubiendo : cuenta.internosBajando;
+                return interno != null && lista.has(String(interno));
+            }
             if (mapaFiltroZona === "patio_azul") {
                 return Array.isArray(patioAzulPuntos) && puntoEnPoligono(lat, lon, patioAzulPuntos);
             }
@@ -547,7 +656,7 @@
             const interno = internoPorMid[p.mid];
             if (!coincideBusquedaMapa([interno, p.plate, p.mid])) return;
             if (!pasaFiltroEstadoMapa(p.speed)) return;
-            if (!pasaFiltroZonaMapa(p.mid, lat, lon)) return;
+            if (!pasaFiltroZonaMapa(p.mid, lat, lon, interno)) return;
             idsFlota.add(p.mid);
             const label = interno || p.plate || p.mid;
             upsertMarker(markersFlotaByMid, p.mid, lat, lon, fleetDotIcon(label, p.course, p.speed), fleetPopupHtml(p, interno), -1000);
@@ -570,17 +679,13 @@
                 lon = Number(row.lon);
             }
             if (!isFinite(lat) || !isFinite(lon)) return;
-            if (!pasaFiltroZonaMapa(row.vehicle_id, lat, lon)) return;
+            if (!pasaFiltroZonaMapa(row.vehicle_id, lat, lon, row.interno || internoPorMid[row.vehicle_id])) return;
             idsFila.add(row.vehicle_id);
             upsertMarker(markersByVehicleId, row.vehicle_id, lat, lon, busMarkerIcon(row), popupHtml(row), 0);
         });
         removeMarkersNotIn(markersByVehicleId, idsFila);
 
-        const miniPatioAzul = document.getElementById("miniPatioAzul");
-        if (miniPatioAzul) {
-            const enPatioAzul = contarEnPatioAzul();
-            miniPatioAzul.textContent = enPatioAzul == null ? "—" : String(enPatioAzul);
-        }
+        actualizarMiniStats();
     }
 
     // Centra/hace zoom sobre los marcadores visibles ahora mismo (después de
@@ -2009,6 +2114,40 @@
         }
     }
 
+    // La cuenta del programa por punto (puntos_ahora). El programa la renueva cada 30 s;
+    // aquí se pide cada 15 s mientras se ve el mapa. Si falla, se deja la anterior:
+    // cuentaDelPrograma() la descarta sola cuando se pone vieja.
+    async function cargarPuntos() {
+        if (!navigator.onLine || !cfg.TABLA_PUNTOS) return;
+        try {
+            const { data, error } = await client.from(cfg.TABLA_PUNTOS)
+                .select("punto,orden,sentido,vienen,vienen_sin_arrancar,estan,en_fila,por_salir,por_zona,buses,foto_en")
+                .order("orden", { ascending: true });
+            if (error) throw error;
+            puntosAhora = data || [];
+        } catch (err) {
+            console.warn("Error cargando la cuenta de los puntos:", err);
+        }
+        puntosIntentado = true;
+        renderMap();
+    }
+
+    // mid -> interno de toda la flota, para que el filtro del mapa encuentre también a los
+    // buses que no han tenido despacho hoy (la cuenta del programa dice el interno).
+    async function cargarInternosFlota() {
+        if (!navigator.onLine || !cfg.TABLA_FLOTA) return;
+        try {
+            const { data, error } = await client.from(cfg.TABLA_FLOTA).select("mid,interno");
+            if (error) throw error;
+            const mapa = {};
+            (data || []).forEach(function (r) { if (r.mid && r.interno) mapa[r.mid] = String(r.interno); });
+            internosFlota = mapa;
+            renderMap();
+        } catch (err) {
+            console.warn("Error cargando los internos de la flota:", err);
+        }
+    }
+
     function direccionVehiculosPorMid() {
         const mapa = {};
         direccionVehiculos.forEach(function (r) { if (r.vehicle_id) mapa[r.vehicle_id] = r.direccion; });
@@ -2027,10 +2166,9 @@
         function sumar(grupo) {
             return Object.keys(grupo).reduce(function (s, k) { return s + grupo[k]; }, 0);
         }
-        const miniSubiendo = document.getElementById("miniSubiendo");
-        const miniBajando = document.getElementById("miniBajando");
-        if (miniSubiendo) miniSubiendo.textContent = String(sumar(subiendo));
-        if (miniBajando) miniBajando.textContent = String(sumar(bajando));
+        // Los contadores del mapa salen de la cuenta del programa; esto queda de respaldo.
+        sumasDirecciones = { subiendo: sumar(subiendo), bajando: sumar(bajando) };
+        actualizarMiniStats();
 
         const boxes = document.querySelectorAll("[data-resumen-box]");
         if (!boxes.length) return;
@@ -2294,6 +2432,7 @@
         if (document.visibilityState === "visible" && navigator.onLine) {
             cargarInicial();
             cargarPosiciones();
+            if (appStarted) cargarPuntos();
             if (!realtimeChannel || realtimeChannel.state !== "joined") {
                 suscribirRealtime();
             }
@@ -2341,6 +2480,17 @@
         if ((activeTab === "mapa" || activeTab === "subida") && navigator.onLine) cargarResumenDirecciones();
         if (activeTab === "mapa" && navigator.onLine) cargarDireccionVehiculos();
     }, 30000);
+
+    // La cuenta del programa (Patio azul, Subiendo, Bajando) cada 15 s mientras se ve el
+    // mapa: el programa la renueva cada 30 s, así nunca se ve con más de 45 s de atraso.
+    setInterval(function () {
+        if (appStarted && activeTab === "mapa" && navigator.onLine) cargarPuntos();
+    }, 15000);
+
+    // Los internos de la flota casi no cambian: cada 5 minutos alcanza.
+    setInterval(function () {
+        if (appStarted && navigator.onLine) cargarInternosFlota();
+    }, 300000);
 
     function initDespachosControles() {
         const btn = document.getElementById("btnRefreshDespachos");
@@ -2886,6 +3036,8 @@
             cargarConductores();
             cargarResumenDirecciones();
             cargarDireccionVehiculos();
+            cargarPuntos();
+            cargarInternosFlota();
             cargarTurnos();
         } else {
             setConnection("offline");
