@@ -171,6 +171,10 @@
     const REALIZADOS_PAGE_SIZE = 25;
     let vuelos = [];
     let vuelosLoading = false;
+    // v1.29.0: lo que anotan los gestores en la app del Personal ("fecha|VUELO" -> [{interno, pasajeros, anotado_en}]).
+    // vuelosPasajerosOk: null = todavía no se sabe; false = la base no lo trae (la SQL v22.2 no está o falló).
+    let vuelosPasajeros = {};
+    let vuelosPasajerosOk = null;
     let resumenDirecciones = []; // en vivo, desde resumen_direcciones_actual
     let direccionVehiculos = []; // en vivo, desde direccion_vehiculo_actual (una fila por bus)
     let puntosAhora = []; // en vivo, desde puntos_ahora: la cuenta del programa por punto (vienen / están)
@@ -838,7 +842,18 @@
     }
 
     // ============== Tabla y chips ==============
+    // Orden de la fila: el turno y, si dos buses tienen el mismo, primero el que
+    // llegó antes. Pasa con el bus metido a mano desde Control (GPS dañado): queda
+    // con el mismo número del que llegó antes que él, porque el turno es un número
+    // entero y los del servidor no se mueven. Sin esto el orden entre los dos
+    // quedaba al azar de la base y podía cambiar de un minuto a otro.
+    function ordenFila(a, b) {
+        return (a.turno || 9999) - (b.turno || 9999) ||
+            (Date.parse(a.llegada_aeropuerto) || 0) - (Date.parse(b.llegada_aeropuerto) || 0);
+    }
+
     function renderChipsAndTable() {
+        refrescarAvisoManual();
         const posicionesPorMid = mapaPosicionesPorMid();
         const grupos = {};
         rows.forEach(function (r) {
@@ -850,9 +865,7 @@
             // aeropuerto, con corroboración GPS); acá solo reordenamos cada
             // grupo por ese mismo criterio y numeramos 1..N DENTRO del grupo
             // (misma posición "por itinerario" que mostraba esta tabla antes).
-            arr.sort(function (a, b) {
-                return (a.turno || 9999) - (b.turno || 9999);
-            });
+            arr.sort(ordenFila);
             arr.forEach(function (r, idx) { r._posGrupo = idx + 1; });
         });
 
@@ -1020,9 +1033,7 @@
         const wrap = document.getElementById("turnoLine");
         if (!wrap) return;
 
-        const ordenados = rows.slice().sort(function (a, b) {
-            return (a.turno || 9999) - (b.turno || 9999);
-        });
+        const ordenados = rows.slice().sort(ordenFila);
 
         const antes = {};
         Object.keys(turnoStopEls).forEach(function (vid) {
@@ -1641,9 +1652,110 @@
     // cada carga, así que se va moviendo sola con el reloj.
     const VUELOS_VENTANA_ATRAS_MS = 60 * 60 * 1000; // 1h hacia atrás
     const VUELOS_VENTANA_ADELANTE_MS = 2 * 60 * 60 * 1000; // 2h hacia adelante
+    // v1.29.0: un vuelo que ya tiene pasajeros anotados se sigue viendo hasta 4 h después de llegar
+    // (la gente sale ~25 min después de aterrizar y el bus se despacha más tarde).
+    const VUELOS_CON_PASAJEROS_ATRAS_MS = 4 * 60 * 60 * 1000;
+    const RPC_PASAJEROS_VUELOS = cfg.RPC_PASAJEROS_VUELOS || "vuelos_gestor_por_vuelo";
+    // Para decir si el bus ya salió: un despacho de bajada del mismo bus entre 1 h antes y 1 h 30 después de anotar
+    // (la misma regla que usa la app del Personal).
+    const BUS_SALIO_ANTES_MS = 60 * 60 * 1000;
+    const BUS_SALE_DESPUES_MS = 90 * 60 * 1000;
+    const DESTINO_BAJADA = { "4501": "Terminal Norte", "4503": "Nutibara", "4507": "Almacentro", "4413": "Exposiciones", "3385": "San Diego" };
 
     function fechaLocalStr(d) {
         return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    }
+
+    function claveVuelo(fecha, vuelo) {
+        return String(fecha || "").slice(0, 10) + "|" + String(vuelo || "").trim().toUpperCase();
+    }
+
+    function pasajerosDe(v) {
+        return vuelosPasajeros[claveVuelo(v.fecha, v.vuelo)] || [];
+    }
+
+    // Lo anotado por los gestores en esos días. Nunca hace caer la pestaña: si la base no lo trae, la tabla de
+    // vuelos sale igual que antes y se avisa en el subtítulo.
+    async function cargarPasajerosVuelos(fechas) {
+        try {
+            const { data, error } = await client.rpc(RPC_PASAJEROS_VUELOS, { p_fechas: fechas });
+            if (error) throw error;
+            const mapa = {};
+            (Array.isArray(data) ? data : []).forEach(function (r) {
+                const n = Number(r.pasajeros) || 0;
+                if (!r.vuelo || !r.interno || n <= 0) return;
+                const k = claveVuelo(r.fecha, r.vuelo);
+                (mapa[k] = mapa[k] || []).push({ interno: String(r.interno), pasajeros: n, anotado_en: r.anotado_en });
+            });
+            vuelosPasajeros = mapa;
+            vuelosPasajerosOk = true;
+        } catch (err) {
+            console.warn("Pasajeros de los gestores no disponibles:", err);
+            vuelosPasajeros = {};
+            vuelosPasajerosOk = false;
+        }
+    }
+
+    const ITINERARIOS_BAJAN = new Set((cfg.ITINERARIOS || [])
+        .filter(function (i) { return i.grupo === "AEROPUERTO"; })
+        .map(function (i) { return String(i.id); }));
+    const NOMBRES_BAJAN = new Set((cfg.ITINERARIOS || [])
+        .filter(function (i) { return i.grupo === "AEROPUERTO"; })
+        .map(function (i) { return normalizarItinerario(i.nombre); }));
+
+    // ¿Ese bus ya salió con los pasajeros anotados a esa hora? Busca su despacho de bajada en Realizados; si no, si
+    // está en la fila del aeropuerto.
+    function estadoBusVuelo(interno, anotadoEn) {
+        const n = soloNumeroBus(interno);
+        const t = new Date(anotadoEn).getTime();
+        let mejor = null;
+        if (!isNaN(t)) {
+            realizados.forEach(function (r) {
+                if (r.estado === "CANCELADO" || soloNumeroBus(r.interno) !== n) return;
+                const baja = ITINERARIOS_BAJAN.has(String(r.itinerario_id || "")) ||
+                    NOMBRES_BAJAN.has(normalizarItinerario(r.itinerario));
+                if (!baja) return;
+                const s = new Date(r.created_at).getTime();
+                if (isNaN(s) || s < t - BUS_SALIO_ANTES_MS || s > t + BUS_SALE_DESPUES_MS) return;
+                if (!mejor || Math.abs(s - t) < Math.abs(mejor.s - t)) mejor = { s: s, r: r };
+            });
+        }
+        if (mejor) {
+            const destino = DESTINO_BAJADA[String(mejor.r.itinerario_id || "")];
+            const hora = new Date(mejor.s).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", hour12: false });
+            return { cls: "salio", txt: "salió " + hora + (destino ? " a " + destino : "") };
+        }
+        const enFila = rows.find(function (r) { return soloNumeroBus(r.interno) === n; });
+        if (enFila) return { cls: "fila", txt: enFila.turno ? "en la fila · turno " + enFila.turno : "en la fila" };
+        return { cls: "espera", txt: "sin despacho" };
+    }
+
+    // Celda "Pasajeros": el total del vuelo y, debajo, cada bus con lo suyo y si ya salió.
+    function celdaPasajeros(v) {
+        const regs = pasajerosDe(v);
+        if (!regs.length) {
+            return vuelosPasajerosOk === false
+                ? '<span class="vp-nada">—</span>'
+                : '<span class="vp-nada">Sin anotar</span>';
+        }
+        const porBus = {};
+        regs.forEach(function (r) {
+            const k = soloNumeroBus(r.interno);
+            const b = porBus[k] = porBus[k] || { interno: r.interno, pasajeros: 0, anotado_en: r.anotado_en };
+            b.pasajeros += r.pasajeros;
+            if (new Date(r.anotado_en) > new Date(b.anotado_en)) b.anotado_en = r.anotado_en;
+        });
+        const buses = Object.values(porBus).sort(function (a, b) { return new Date(a.anotado_en) - new Date(b.anotado_en); });
+        const total = buses.reduce(function (s, b) { return s + b.pasajeros; }, 0);
+        const chips = buses.map(function (b) {
+            const e = estadoBusVuelo(b.interno, b.anotado_en);
+            return `<span class="vp-bus vp-${e.cls}" title="Bus ${escapeHtml(b.interno)}: ${b.pasajeros} pasajeros de este vuelo · ${escapeHtml(e.txt)}">` +
+                `<b>${escapeHtml(b.interno)}</b><span class="vp-num">${b.pasajeros}</span><span class="vp-pas">pas.</span>` +
+                `<span class="vp-estado">${escapeHtml(e.txt)}</span></span>`;
+        }).join("");
+        return `<div class="vp-total"><b>${total}</b> pasajero${total === 1 ? "" : "s"}` +
+            `<span class="vp-sub"> en ${buses.length} bus${buses.length === 1 ? "" : "es"}</span></div>` +
+            `<div class="vp-buses">${chips}</div>`;
     }
 
     async function cargarVuelos() {
@@ -1661,15 +1773,20 @@
             const ahora = new Date();
             const desde = new Date(ahora.getTime() - VUELOS_VENTANA_ATRAS_MS);
             const hasta = new Date(ahora.getTime() + VUELOS_VENTANA_ADELANTE_MS);
+            const desdeConPasajeros = new Date(ahora.getTime() - VUELOS_CON_PASAJEROS_ATRAS_MS);
             // La ventana puede cruzar la medianoche (ej. a las 11:30pm, "+2h" ya es
             // del día siguiente) -- se consultan todas las fechas que toca, no solo
             // la de hoy, para no perder vuelos ya cruzada la medianoche.
-            const fechas = Array.from(new Set([fechaLocalStr(desde), fechaLocalStr(ahora), fechaLocalStr(hasta)]));
-            const { data, error } = await client
-                .from(cfg.TABLA_VUELOS)
-                .select("*")
-                .eq("tipo", "llegada")
-                .in("fecha", fechas);
+            const fechas = Array.from(new Set([fechaLocalStr(desdeConPasajeros), fechaLocalStr(desde),
+                fechaLocalStr(ahora), fechaLocalStr(hasta)]));
+            const [{ data, error }] = await Promise.all([
+                client
+                    .from(cfg.TABLA_VUELOS)
+                    .select("*")
+                    .eq("tipo", "llegada")
+                    .in("fecha", fechas),
+                cargarPasajerosVuelos(fechas),
+            ]);
             if (error) throw error;
             // vuelos_mde es un log de eventos: cada cambio de estado de un vuelo
             // agrega una fila nueva (mismo "vuelo", distinto operation_time), no
@@ -1690,7 +1807,9 @@
             vuelos = Object.values(masRecientePorVuelo)
                 .filter(function (v) {
                     const ts = vueloTimestamp(v);
-                    return ts >= desde.getTime() && ts <= hasta.getTime();
+                    if (ts >= desde.getTime() && ts <= hasta.getTime()) return true;
+                    // v1.29.0: el que ya llegó hace más de 1 h se queda si los gestores le anotaron pasajeros
+                    return ts >= desdeConPasajeros.getTime() && ts < desde.getTime() && pasajerosDe(v).length > 0;
                 })
                 .sort(function (a, b) { return vueloTimestamp(a) - vueloTimestamp(b); });
             renderVuelos();
@@ -1710,7 +1829,24 @@
         if (!box) return;
 
         if (badge) badge.textContent = String(vuelos.length);
-        if (subtitle) subtitle.textContent = `${vuelos.length} vuelos · última hora y próximas 2 horas`;
+        if (subtitle) {
+            let texto = `${vuelos.length} vuelos · última hora y próximas 2 horas`;
+            if (vuelosPasajerosOk === true) {
+                texto = `${vuelos.length} vuelos · última hora (4 h si tienen pasajeros) y próximas 2 horas`;
+                let pas = 0, conPas = 0;
+                vuelos.forEach(function (v) {
+                    const n = pasajerosDe(v).reduce(function (s, r) { return s + r.pasajeros; }, 0);
+                    pas += n;
+                    if (n) conPas++;
+                });
+                texto += conPas
+                    ? ` · ${pas} pasajero${pas === 1 ? "" : "s"} anotado${pas === 1 ? "" : "s"} por los gestores en ${conPas} vuelo${conPas === 1 ? "" : "s"}`
+                    : " · los gestores todavía no han anotado pasajeros";
+            } else if (vuelosPasajerosOk === false) {
+                texto += " · pasajeros de los gestores: no disponibles";
+            }
+            subtitle.textContent = texto;
+        }
 
         if (!vuelos.length) {
             box.innerHTML = '<div class="loading">No hay vuelos de llegada en este rango de horas</div>';
@@ -1719,20 +1855,22 @@
 
         const filas = vuelos.map(function (v) {
             const estado = vueloEstadoPill(v);
+            const conPasajeros = pasajerosDe(v).length > 0;
             return `
-                <tr>
+                <tr data-vuelo="${escapeHtml(v.vuelo || "")}"${conPasajeros ? ' class="vp-con"' : ""}>
                     <td class="hora">${escapeHtml(vueloHora(v))}</td>
-                    <td class="interno">${escapeHtml(v.vuelo || "—")}</td>
+                    <td class="interno">${escapeHtml(v.vuelo || "—")}<span class="vp-aero">${escapeHtml(v.aerolinea || "")}</span></td>
                     <td>${escapeHtml(v.aerolinea || "—")}</td>
                     <td>${escapeHtml(v.ciudad || "—")}</td>
                     <td>${escapeHtml(v.puerta || "—")}</td>
                     <td><span class="estado-pill ${estado.cls}">${escapeHtml(estado.txt)}</span></td>
+                    <td class="vp-celda">${celdaPasajeros(v)}</td>
                 </tr>
             `;
         }).join("");
 
         box.innerHTML = `
-            <table class="arrivals">
+            <table class="arrivals vuelos-tabla">
                 <thead>
                     <tr>
                         <th>Hora</th>
@@ -1741,6 +1879,7 @@
                         <th>Origen</th>
                         <th>Puerta</th>
                         <th>Estado</th>
+                        <th>Pasajeros y buses</th>
                     </tr>
                 </thead>
                 <tbody>${filas}</tbody>
@@ -1863,6 +2002,7 @@
             renderRealizados();
             renderSubida();
             renderMap();
+            if (activeTab === "vuelos" && vuelos.length) renderVuelos();   // v1.29.0: el bus que acaba de salir
         } catch (err) {
             console.warn("Error cargando realizados:", err);
             const box = document.getElementById("realizadosBox");
@@ -2430,6 +2570,7 @@
             renderChipsAndTable();
             renderTurnoLine();
             renderMap();
+            if (activeTab === "vuelos" && vuelos.length) renderVuelos();   // v1.29.0: el turno de cada bus en la fila
             setLastUpdate();
             reconnectDelay = 2000;
         } catch (err) {
@@ -2689,6 +2830,76 @@
         }) || null;
     }
 
+    // ===== ¿El bus ya está en la lista de espera? (v1.28.1) =====
+    // El despacho manual es para el bus que NO está en la lista (no lo vio el
+    // GPS, se varó...). Si ya está, se despacha desde la lista con "Asignar",
+    // para respetar el turno: aquí se avisa y no se deja enviar.
+    // Excepción: el de la lista que no trae conductor en Sonar. "Asignar" no lo
+    // puede despachar (no hay a quién asignarle el viaje) y lo manda aquí; se
+    // avisa igual, pero sí se deja.
+    let enviandoManual = false;
+
+    function soloNumeroBus(v) {
+        // "0742", "742 " y "742" son el mismo bus.
+        return String(v == null ? "" : v).replace(/[^0-9A-Za-z]/g, "").toUpperCase().replace(/^0+(?=.)/, "");
+    }
+
+    function filaDelBus(interno, mid) {
+        const n = soloNumeroBus(interno);
+        return rows.find(function (r) {
+            return (mid && r.vehicle_id && String(r.vehicle_id) === String(mid)) ||
+                (n && soloNumeroBus(r.interno) === n);
+        }) || null;
+    }
+
+    function conductorDeFila(row) {
+        const d = String((row && row.driver_id) || "").trim();
+        return d === "0" ? "" : d;
+    }
+
+    function turnoEnLista(row) {
+        // El mismo número que se ve en la tabla: dentro de su itinerario.
+        const it = row.itinerario || "Sin itinerario";
+        const grupo = rows.filter(function (r) { return (r.itinerario || "Sin itinerario") === it; }).sort(ordenFila);
+        return "turno " + (grupo.indexOf(row) + 1) + " de " + it;
+    }
+
+    function avisarSiEstaEnLista() {
+        const caja = document.getElementById("manualEnLista");
+        const enviar = document.getElementById("manualSubmit");
+        if (!caja || !enviar) return null;
+        const v = buscarVehiculoPorInterno(document.getElementById("manualInterno").value.trim());
+        const row = v ? filaDelBus(v.interno, v.mid) : null;
+        if (!row) {
+            caja.hidden = true;
+            caja.innerHTML = "";
+            if (!enviandoManual) enviar.disabled = false;
+            return null;
+        }
+        const bus = escapeHtml(row.interno || v.interno);
+        const donde = escapeHtml(turnoEnLista(row)) +
+            (row.llegada_aeropuerto ? ", llegó a las " + escapeHtml(formatHora(row.llegada_aeropuerto)) : "");
+        if (conductorDeFila(row)) {
+            caja.className = "ya-en-lista bloquea";
+            caja.innerHTML = `<strong>El ${bus} ya está en la lista de espera</strong> (${donde}).<br>` +
+                "Se despacha desde la lista, para respetar el turno. Por el despacho manual no se puede." +
+                '<button type="button" class="btn btn-primary" id="manualIrLista">Despacharlo desde la lista</button>';
+            if (!enviandoManual) enviar.disabled = true;
+        } else {
+            caja.className = "ya-en-lista deja";
+            caja.innerHTML = `<strong>El ${bus} está en la lista de espera</strong> (${donde}).<br>` +
+                "No trae conductor en Sonar, por eso se despacha aquí: escoja quién va manejando.";
+            if (!enviandoManual) enviar.disabled = false;
+        }
+        caja.hidden = false;
+        return row;
+    }
+
+    function refrescarAvisoManual() {
+        const m = document.getElementById("manualModal");
+        if (m && !m.hidden) avisarSiEstaEnLista();
+    }
+
     function buscarConductorPorNombre(val) {
         const v = normalizar(val);
         if (!v) return null;
@@ -2794,6 +3005,7 @@
         const inputMid = document.getElementById("manualMid");
         const v = buscarVehiculoPorInterno(inputInterno.value);
         inputMid.value = v ? v.mid : "";
+        avisarSiEstaEnLista();
     }
 
     function actualizarCamposConductor() {
@@ -2824,6 +3036,9 @@
         document.getElementById("manualDriverId").value = "";
         document.getElementById("manualObs").value = "";
         document.getElementById("manualError").hidden = true;
+        const cajaLista = document.getElementById("manualEnLista");
+        if (cajaLista) { cajaLista.hidden = true; cajaLista.innerHTML = ""; }
+        document.getElementById("manualSubmit").disabled = false;
 
         const aviso = [];
         if (!vehiculos.length) aviso.push("Sin vehículos cargados");
@@ -2864,6 +3079,14 @@
         const observaciones = document.getElementById("manualObs").value.trim();
 
         if (!mId) { errorBox.textContent = "Selecciona un interno válido de la lista (MID requerido)."; errorBox.hidden = false; return; }
+        const enLista = filaDelBus(interno, mId);
+        if (enLista && conductorDeFila(enLista)) {
+            avisarSiEstaEnLista();
+            errorBox.textContent = "El " + (enLista.interno || interno) + " ya está en la lista de espera (" +
+                turnoEnLista(enLista) + "): despáchelo desde la lista.";
+            errorBox.hidden = false;
+            return;
+        }
         if (!drvId) { errorBox.textContent = "Selecciona un conductor válido de la lista (Driver ID requerido)."; errorBox.hidden = false; return; }
         if (!itinerary) { errorBox.textContent = "Selecciona un itinerario."; errorBox.hidden = false; return; }
 
@@ -2874,6 +3097,7 @@
             <div><strong>Conductor:</strong> ${escapeHtml(driverNombre)} (${escapeHtml(drvId)})</div>
             <div><strong>Itinerario:</strong> ${escapeHtml(itinObj?.nombre || itinerary)}</div>
             ${observaciones ? `<div><strong>Observación:</strong> ${escapeHtml(observaciones)}</div>` : ""}
+            ${enLista ? `<div><strong>En la lista:</strong> ${escapeHtml(turnoEnLista(enLista))} (sin conductor en Sonar)</div>` : ""}
         `;
         const ok = await mostrarConfirmacion({
             titulo: "Confirmar despacho manual",
@@ -2888,6 +3112,7 @@
         errorBox.hidden = true;
         submitBtn.disabled = true;
         submitBtn.textContent = "Enviando...";
+        enviandoManual = true;
 
         try {
             const resp = await fetch(cfg.SONAR_DISPATCH_URL, {
@@ -2931,6 +3156,7 @@
             errorBox.textContent = "Error: " + (err.message || String(err));
             errorBox.hidden = false;
         } finally {
+            enviandoManual = false;
             submitBtn.disabled = false;
             submitBtn.textContent = "Enviar despacho";
         }
@@ -2949,6 +3175,16 @@
             if (ev.key === "Escape" && !modal.hidden) cerrarManualModal();
         });
         document.getElementById("manualForm").addEventListener("submit", submitManual);
+        const cajaLista = document.getElementById("manualEnLista");
+        if (cajaLista) {
+            cajaLista.addEventListener("click", function (ev) {
+                if (!ev.target.closest("#manualIrLista")) return;
+                const v = buscarVehiculoPorInterno(document.getElementById("manualInterno").value.trim());
+                const row = v ? filaDelBus(v.interno, v.mid) : null;
+                cerrarManualModal();
+                if (row) openAssignModal(row);
+            });
+        }
 
         // Combobox de vehículos: filtra por interno o placa
         const inputInterno = document.getElementById("manualInterno");

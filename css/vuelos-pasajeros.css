@@ -1,0 +1,173 @@
+/* ============================================================================
+   Pestaña Vuelos: los pasajeros que anotan los gestores (v1.29.0)
+   ----------------------------------------------------------------------------
+   Columna "Pasajeros y buses": el total del vuelo y, debajo, cada bus con sus
+   pasajeros de ese vuelo y si ya salió (verde), está en la fila (azul) o
+   todavía no tiene despacho (ámbar). El color nunca va solo: el texto lo dice.
+
+   Archivo aparte: quitando la línea que lo carga, la columna se ve sin color.
+   ========================================================================== */
+
+table.vuelos-tabla tr.vp-con td {
+    background: var(--success-50);
+}
+
+table.vuelos-tabla td.vp-celda {
+    min-width: 190px;
+}
+
+.vp-nada {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.vp-total {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.vp-total b {
+    font-size: 16px;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.vp-sub {
+    color: var(--text-muted);
+}
+
+.vp-buses {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.vp-bus {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    border-left-width: 4px;
+    background: var(--surface);
+    font-size: 11.5px;
+    line-height: 1.3;
+    white-space: nowrap;
+}
+
+.vp-bus b {
+    font-size: 13px;
+    color: var(--text);
+}
+
+.vp-num {
+    font-weight: 700;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.vp-pas {
+    margin-left: -3px;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.vp-estado {
+    color: var(--text-secondary);
+}
+
+.vp-bus.vp-salio {
+    border-left-color: var(--success-600);
+}
+
+.vp-bus.vp-salio .vp-estado {
+    color: var(--success-700);
+    font-weight: 600;
+}
+
+.vp-bus.vp-fila {
+    border-left-color: var(--primary-600);
+}
+
+.vp-bus.vp-fila .vp-estado {
+    color: var(--primary-700);
+    font-weight: 600;
+}
+
+.vp-bus.vp-espera {
+    border-left-color: var(--warning-500);
+}
+
+.vp-bus.vp-espera .vp-estado {
+    color: var(--warning-700);
+    font-weight: 600;
+}
+
+@media (max-width: 600px) {
+    /* style.css convierte la ÚLTIMA columna de las tablas en una flechita "›" (en la lista es el botón Asignar) y
+       le borra el título. Aquí la última es "Pasajeros y buses": se deja normal. */
+    table.vuelos-tabla th:last-child,
+    table.vuelos-tabla td:last-child {
+        width: auto;
+        text-align: left;
+        padding-right: 6px;
+    }
+    table.vuelos-tabla td:last-child::after {
+        content: none;
+    }
+    table.vuelos-tabla th:last-child {
+        font-size: 11px;
+    }
+    .vp-buses {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+    .vp-bus {
+        flex-wrap: wrap;
+        row-gap: 0;
+    }
+}
+
+/* La aerolínea debajo del número de vuelo: solo en el celular angosto, donde su columna se esconde. */
+.vp-aero {
+    display: none;
+}
+
+@media (max-width: 560px) {
+    /* En el celular el Origen también se esconde (la Puerta ya se esconde en pantalla-chica.css):
+       lo que importa aquí es el vuelo y sus buses. */
+    table.vuelos-tabla th:nth-child(4),
+    table.vuelos-tabla td:nth-child(4) {
+        display: none;
+    }
+    table.vuelos-tabla td.vp-celda {
+        min-width: 150px;
+    }
+    .vp-bus {
+        white-space: normal;
+    }
+}
+
+@media (max-width: 430px) {
+    /* pantalla-chica.css esconde la 2.ª columna de las tablas (en la lista es la hora exacta), pero aquí la 2.ª es
+       el NÚMERO DEL VUELO, lo que más se busca: se deja, y la que se va es la Aerolínea, que pasa debajo del número. */
+    table.vuelos-tabla th:nth-child(2),
+    table.vuelos-tabla td:nth-child(2) {
+        display: table-cell;
+    }
+    table.vuelos-tabla th:nth-child(3),
+    table.vuelos-tabla td:nth-child(3) {
+        display: none;
+    }
+    table.vuelos-tabla .vp-aero {
+        display: block;
+        font-size: 10.5px;
+        font-weight: 500;
+        color: var(--text-muted);
+        white-space: normal;
+        max-width: 90px;
+    }
+}

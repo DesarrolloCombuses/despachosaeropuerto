@@ -35,6 +35,8 @@
     <link rel="stylesheet" href="css/pantalla-chica.css">
     <link rel="stylesheet" href="css/mapa-enturnes.css">
     <link rel="stylesheet" href="css/sin-conductor.css">
+<link rel="stylesheet" href="css/ya-en-la-lista.css">
+<link rel="stylesheet" href="css/vuelos-pasajeros.css">
 
     <!-- CSS crítico inline: pinta el splash mientras el resto del CSS llega -->
     <style>
@@ -384,7 +386,7 @@
                 </button>
             </div>
             <form id="manualForm" class="modal-body">
-                <p class="modal-description">Enviar despacho manual a sonar-dispatch para cualquier vehículo.</p>
+                <p class="modal-description">Enviar despacho manual a sonar-dispatch. El bus que ya está en la lista de espera se despacha desde la lista.</p>
                 <div class="form-grid">
                     <div class="form-row">
                         <label for="manualInterno">Interno <span class="req">*</span></label>
@@ -409,6 +411,8 @@
                         </div>
                     </div>
                 </div>
+                <!-- Si el bus ya está en la lista de espera (v1.28.1): ver avisarSiEstaEnLista() en main.js -->
+                <div id="manualEnLista" class="ya-en-lista" role="status" hidden></div>
                 <div class="form-row">
                     <label for="manualDriverId">Driver ID <span class="req">*</span></label>
                     <input id="manualDriverId" type="text" placeholder="Driver ID" readonly required>

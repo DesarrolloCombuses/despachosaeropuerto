@@ -5,7 +5,7 @@
 // - Tiles del mapa (OSM):               Network First con fallback a cache
 // - API Supabase REST + Edge Functions: Network Only (datos frescos siempre)
 
-const VERSION = "v1.28.0";
+const VERSION = "v1.29.0";
 const CACHE_APP = "jmc-app-" + VERSION;
 const CACHE_CDN = "jmc-cdn-" + VERSION;
 const CACHE_TILES = "jmc-tiles-" + VERSION;
@@ -19,6 +19,8 @@ const APP_SHELL = [
     "./css/pantalla-chica.css",
     "./css/mapa-enturnes.css",
     "./css/sin-conductor.css",
+    "./css/ya-en-la-lista.css",
+    "./css/vuelos-pasajeros.css",
     "./js/config.js",
     "./js/main.js",
     "./manifest.webmanifest",

@@ -1,0 +1,42 @@
+/* ============================================================================
+   Despacho manual de un bus que ya está en la lista de espera (v1.28.1)
+   ----------------------------------------------------------------------------
+   El despacho manual es para el bus que no está en la lista. Si ya está, se
+   despacha desde la lista ("Asignar"), para respetar el turno: el aviso rojo
+   no deja enviar y ofrece el botón "Despacharlo desde la lista".
+
+   Si está en la lista pero no trae conductor en Sonar, "Asignar" no lo puede
+   despachar y lo manda aquí: el aviso amarillo informa y sí deja.
+
+   Archivo aparte: quitando la línea que lo carga, queda todo como estaba.
+   ========================================================================== */
+
+.ya-en-lista {
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    margin: 4px 0 10px;
+}
+
+.ya-en-lista.bloquea {
+    background: #fef2f2;
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+}
+
+.ya-en-lista.deja {
+    background: #fef3c7;
+    border: 1px solid #fcd34d;
+    color: #92400e;
+}
+
+#manualIrLista {
+    width: 100%;
+    margin-top: 8px;
+}
+
+#manualSubmit:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
