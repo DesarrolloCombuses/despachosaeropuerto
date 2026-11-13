@@ -230,6 +230,7 @@
         }
         if (name === "realizados") {
             cargarRealizados();
+            if (GESTOR && !tableroGestor) cargarTableroGestor(true); // v1.30.1
         }
         if (name === "vuelos" && !vuelos.length && !vuelosLoading) {
             cargarVuelos();
@@ -3306,6 +3307,9 @@
     let tableroGestor = null;        // lo de vuelos_gestor_tablero: vuelos del día y lo anotado
     let tableroGestorEn = 0;
     let tableroGestorCargando = null;
+    let tableroGestorError = "";     // v1.30.1: por qué no llegó lo anotado (se muestra y se reintenta solo)
+    let tableroReintento = null;
+    let tableroEspera = 5000;
     let gestorRealizadosTimer = null;
     let pasSalida = null;            // la salida que se está llenando en la ventana
     let pasVuelo = null;             // el vuelo escogido en la ventana
@@ -3347,11 +3351,23 @@
                 if (!data || !data.ok) throw new Error("El tablero no respondió");
                 tableroGestor = data;
                 tableroGestorEn = Date.now();
+                tableroGestorError = "";
+                tableroEspera = 5000;
                 renderRealizados();
                 if (pasSalida && !document.getElementById("pasModal").hidden) pintarColocar();
                 return data;
             } catch (err) {
                 console.warn("Tablero de los gestores:", err);
+                // v1.30.1: se reintenta solo, pronto (5 s, 10, 20... hasta 60), y se dice qué pasó
+                tableroGestorError = mensajeError(err);
+                if (!tableroReintento) {
+                    tableroReintento = setTimeout(function () {
+                        tableroReintento = null;
+                        if (navigator.onLine) cargarTableroGestor(true);
+                    }, tableroEspera);
+                    tableroEspera = Math.min(tableroEspera * 2, 60000);
+                }
+                if (!tableroGestor) renderRealizados();
                 return tableroGestor;
             } finally {
                 tableroGestorCargando = null;
@@ -3450,7 +3466,9 @@
             subtitle.textContent = listo
                 ? `Hoy salieron ${salidas.length} bus${salidas.length === 1 ? "" : "es"} del aeropuerto · ` +
                   `${salidas.length - faltan.length} con pasajeros · faltan ${faltan.length}`
-                : "Cargando lo anotado por los gestores...";
+                : tableroGestorError
+                    ? "No llegó lo anotado por los gestores (" + tableroGestorError + "). Se vuelve a intentar solo..."
+                    : "Cargando lo anotado por los gestores...";
         }
 
         const q = (realizadosSearch || "").toLowerCase().trim();
@@ -3491,11 +3509,11 @@
             const detalle = Object.keys(porVuelo).map(function (v) {
                 return `<span class="pg-vuelo">${escapeHtml(v)} <b>${porVuelo[v]}</b></span>`;
             }).join("");
-            const celda = !listo ? '<span class="muted">…</span>'
+            const celda = !listo ? '<span class="muted">Cargando…</span>'
                 : total ? `<span class="pg-ok"><b>${total}</b> de ${CUPO_BUS}</span>${detalle}`
                 : '<span class="pg-falta">Faltan pasajeros</span>';
             const cupo = CUPO_BUS - total;
-            const boton = !listo ? ""
+            const boton = !listo ? `<button type="button" class="btn-colocar" data-colocar="${escapeHtml(r.id)}">Colocar</button>`
                 : cupo > 0 ? `<button type="button" class="btn-colocar${total ? " btn-colocar-mas" : ""}" data-colocar="${escapeHtml(r.id)}">${total ? "Agregar" : "Colocar"}</button>`
                 : '<span class="muted pg-lleno">Lleno</span>';
             return `
@@ -3557,9 +3575,18 @@
             String(a.vuelo).toUpperCase() === String(b.vuelo).toUpperCase();
     }
 
-    function abrirColocar(id) {
+    async function abrirColocar(id) {
         const r = realizados.find(function (x) { return x.id === id; });
-        if (!r || !tableroGestor) return;
+        if (!r) return;
+        if (!tableroGestor) {
+            // v1.30.1: todavía no había llegado lo anotado: se trae ya
+            showToast("ok", "Trayendo los vuelos...");
+            await cargarTableroGestor(true);
+            if (!tableroGestor) {
+                showToast("err", "No llegaron los vuelos: " + (tableroGestorError || "sin conexión") + ". Intente en un momento.");
+                return;
+            }
+        }
         pasSalida = r;
         pasVuelo = null;
         document.getElementById("pasBuscar").value = "";
@@ -3648,6 +3675,7 @@
 
     function mensajeError(e) {
         const m = (e && (e.message || e.msg)) || String(e);
+        if (/statement timeout|57014/i.test(m)) return "la base de datos tardó mucho en responder";
         return /fetch|network|Failed|Load failed/i.test(m) ? "No hubo conexión: no se guardó. Intente otra vez." : m;
     }
 
