@@ -233,6 +233,12 @@
                         <input type="checkbox" id="filterRealizadosActivos">
                         <span>Solo los que faltan</span>
                     </label>
+                    <button type="button" id="btnExcel" class="btn-excel" title="Descargar el Excel de un día">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <path d="M12 3v12m0 0l-5-5m5 5l5-5M5 21h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        <span>Excel</span>
+                    </button>
                 </div>
             </div>
             <div id="realizadosBox" class="tabla-box despachos-box">
@@ -326,6 +332,42 @@
         </div>
     </div>
 
+    <!-- v1.32.0: Descargar el Excel de un día (solo en la versión de los gestores) -->
+    <div id="excelModal" class="modal-backdrop" hidden>
+        <div class="modal pas-modal excel-modal" role="dialog" aria-modal="true" aria-labelledby="excelTitle">
+            <div class="modal-head">
+                <h2 id="excelTitle">Descargar el Excel</h2>
+                <button class="modal-close" type="button" aria-label="Cerrar" data-close>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-row">
+                    <label for="excelFecha">¿De qué día?</label>
+                    <div class="excel-escoger">
+                        <input id="excelFecha" type="date" class="excel-fecha">
+                        <div class="excel-atajos">
+                            <button type="button" class="excel-atajo" data-excel-dia="hoy">Hoy</button>
+                            <button type="button" class="excel-atajo" data-excel-dia="ayer">Ayer</button>
+                        </div>
+                    </div>
+                    <div id="excelDia" class="pas-cupo"></div>
+                </div>
+                <div class="excel-nota">
+                    Sale un archivo de Excel con dos hojas: <b>Salidas</b> (una fila por cada bus que salió del aeropuerto,
+                    con su itinerario, los pasajeros, quién los puso y a qué hora) y <b>Resumen</b> (los totales por itinerario).
+                </div>
+                <div id="excelError" class="form-error" hidden></div>
+            </div>
+            <div class="modal-foot">
+                <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
+                <button type="button" id="excelDescargar" class="btn btn-primary">Descargar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal genérico de confirmación -->
     <div id="confirmModal" class="modal-backdrop" hidden>
         <div class="modal modal-confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
@@ -406,6 +448,7 @@
     <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script>window.MODO_GESTOR = true;</script>
     <script defer src="js/config.js"></script>
+    <script defer src="js/excel-xlsx.js"></script>
     <script defer src="js/main.js"></script>
 </body>
 </html>

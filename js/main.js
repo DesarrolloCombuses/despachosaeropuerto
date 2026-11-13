@@ -3627,7 +3627,225 @@
         }
     }
 
+
+    // ---- v1.32.0: el Excel de un día (una fila por cada salida del aeropuerto, y un resumen por itinerario) ----
+    const RPC_GESTOR_DIA = "aeropuerto_gestor_dia";
+    const EXCEL_DESDE = "2026-11-12";      // desde ese día los gestores ponen los pasajeros en la casilla del despacho
+    const EXCEL_DIAS_ATRAS = 92;           // lo mismo que deja la base
+
+    function ymdLocal(d) {
+        return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+    }
+    function diaOperativoHoy() {
+        return ymdLocal(new Date(inicioDiaOperativo()));
+    }
+    function diaMenos(ymd, n) {
+        const p = ymd.split("-").map(Number);
+        return ymdLocal(new Date(p[0], p[1] - 1, p[2] - n));
+    }
+    function diaBonito(ymd) {
+        const p = String(ymd || "").split("-");
+        return p.length === 3 ? `${p[2]}/${p[1]}/${p[0]}` : String(ymd || "");
+    }
+
+    function abrirExcel() {
+        const hoy = diaOperativoHoy();
+        const atras = diaMenos(hoy, EXCEL_DIAS_ATRAS);
+        const min = EXCEL_DESDE > atras ? EXCEL_DESDE : atras;
+        const f = document.getElementById("excelFecha");
+        f.max = hoy;
+        f.min = min;
+        if (!f.value || f.value > hoy || f.value < min) f.value = hoy;
+        document.getElementById("excelError").hidden = true;
+        pintarAtajosExcel();
+        document.getElementById("excelModal").hidden = false;
+    }
+
+    function cerrarExcel() {
+        document.getElementById("excelModal").hidden = true;
+    }
+
+    function pintarAtajosExcel() {
+        const f = document.getElementById("excelFecha");
+        const hoy = diaOperativoHoy();
+        document.querySelectorAll("[data-excel-dia]").forEach(function (b) {
+            const dia = b.getAttribute("data-excel-dia") === "hoy" ? hoy : diaMenos(hoy, 1);
+            b.classList.toggle("activo", f.value === dia);
+            b.disabled = dia < f.min;
+        });
+        const sub = document.getElementById("excelDia");
+        if (sub) {
+            sub.textContent = /^\d{4}-\d{2}-\d{2}$/.test(f.value)
+                ? `Desde el ${diaBonito(f.value)} a las 2:30 a. m. hasta el ${diaBonito(diaMenos(f.value, -1))} a las 2:30 a. m.`
+                : "";
+        }
+    }
+
+    function libroPasajeros(dia, filas) {
+        const X = window.XlsxSimple;
+        const salidas = filas.slice().sort(function (a, b) { return new Date(a.created_at) - new Date(b.created_at); });
+        const numero = function (v) { return /^\d+$/.test(String(v || "")) ? Number(v) : (v || ""); };
+        const datos = salidas.map(function (r) {
+            const puesto = pasajerosPuestos(r);
+            const n = Number(r.pasajeros) || 0;
+            const itin = itinerarioDe(r);
+            return [
+                X.serialDia(dia), X.serialHora(r.created_at), numero(r.interno), r.placa || "", numero(itin.id), itin.nombre,
+                destinoDe(r), puesto ? n : null, !puesto ? "Falta" : (n ? "Con pasajeros" : "Salió vacío"),
+                r.gestor || "", r.anotado_en ? X.serialFechaHora(r.anotado_en) : null, Number(r.cambios) || null,
+            ];
+        });
+
+        const orden = ["4501", "4503", "4507", "4413", "3385"];
+        const grupos = {};
+        salidas.forEach(function (r) {
+            const id = String(r.itinerario_id || "");
+            (grupos[id] = grupos[id] || []).push(r);
+        });
+        const pos = function (id) { return orden.indexOf(id) < 0 ? 99 : orden.indexOf(id); };
+        const ids = Object.keys(grupos).sort(function (a, b) { return pos(a) - pos(b); });
+        const t = { salidas: 0, con: 0, vacio: 0, faltan: 0, pasajeros: 0 };
+        const resumen = ids.map(function (id) {
+            const g = grupos[id];
+            const con = g.filter(function (r) { return pasajerosPuestos(r) && Number(r.pasajeros) > 0; }).length;
+            const vacio = g.filter(function (r) { return pasajerosPuestos(r) && !(Number(r.pasajeros) > 0); }).length;
+            const pas = g.reduce(function (s, r) { return s + (pasajerosPuestos(r) ? Number(r.pasajeros) || 0 : 0); }, 0);
+            t.salidas += g.length; t.con += con; t.vacio += vacio; t.faltan += g.length - con - vacio; t.pasajeros += pas;
+            const itin = itinerarioDe(g[0]);
+            return [numero(itin.id), itin.nombre, destinoDe(g[0]), g.length, con, vacio, g.length - con - vacio, pas,
+                    con + vacio ? pas / (con + vacio) : null];
+        });
+        const total = ["Total", "", "", t.salidas, t.con, t.vacio, t.faltan, t.pasajeros,
+                       t.con + t.vacio ? t.pasajeros / (t.con + t.vacio) : null];
+
+        return X.libro({
+            titulo: "Pasajeros del aeropuerto " + diaBonito(dia),
+            hojas: [
+                {
+                    nombre: "Salidas",
+                    columnas: [
+                        { titulo: "Día", ancho: 11, tipo: "fecha" },
+                        { titulo: "Hora de salida", ancho: 15, tipo: "hora" },
+                        { titulo: "Bus", ancho: 7, tipo: "entero" },
+                        { titulo: "Placa", ancho: 10, tipo: "texto" },
+                        { titulo: "Itinerario", ancho: 11, tipo: "entero" },
+                        { titulo: "Nombre del itinerario", ancho: 40, tipo: "texto" },
+                        { titulo: "Va a", ancho: 16, tipo: "texto" },
+                        { titulo: "Pasajeros", ancho: 11, tipo: "entero" },
+                        { titulo: "Estado", ancho: 15, tipo: "texto" },
+                        { titulo: "Puesto por", ancho: 13, tipo: "texto" },
+                        { titulo: "Anotado", ancho: 17, tipo: "fechahora" },
+                        { titulo: "Veces anotado", ancho: 15, tipo: "entero" },
+                    ],
+                    filas: datos,
+                },
+                {
+                    nombre: "Resumen",
+                    columnas: [
+                        { titulo: "Itinerario", ancho: 11, tipo: "entero" },
+                        { titulo: "Nombre del itinerario", ancho: 40, tipo: "texto" },
+                        { titulo: "Va a", ancho: 16, tipo: "texto" },
+                        { titulo: "Salidas", ancho: 10, tipo: "entero" },
+                        { titulo: "Con pasajeros", ancho: 15, tipo: "entero" },
+                        { titulo: "Salieron vacías", ancho: 16, tipo: "entero" },
+                        { titulo: "Faltan", ancho: 9, tipo: "entero" },
+                        { titulo: "Pasajeros", ancho: 11, tipo: "entero" },
+                        { titulo: "Promedio por bus", ancho: 17, tipo: "decimal" },
+                    ],
+                    filas: resumen,
+                    total: total,
+                },
+            ],
+        });
+    }
+
+    function bajarArchivo(blob, nombre) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = nombre;
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 15000);
+    }
+
+    async function descargarExcel() {
+        const err = document.getElementById("excelError");
+        const btn = document.getElementById("excelDescargar");
+        const f = document.getElementById("excelFecha");
+        err.hidden = true;
+        const dia = f.value;
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(dia) || dia > f.max || dia < f.min) {
+            err.textContent = `Escoja un día entre el ${diaBonito(f.min)} y hoy.`;
+            err.hidden = false;
+            return;
+        }
+        if (!navigator.onLine) {
+            err.textContent = "Sin internet: no se puede descargar. Intente cuando vuelva la señal.";
+            err.hidden = false;
+            return;
+        }
+        btn.disabled = true;
+        btn.textContent = "Preparando...";
+        try {
+            const { data, error } = await client.rpc(RPC_GESTOR_DIA, { p_dni: gestorYo.dni, p_fecha: dia });
+            if (error) throw error;
+            if (data && (data.no_es || data.no_gestor)) {
+                cerrarExcel();
+                sacarGestor("Su cédula ya no está habilitada para esta app.");
+                return;
+            }
+            if (!data || !data.ok) throw new Error((data && data.error) || "La base no respondió");
+            const filas = (data.filas || []).filter(function (r) { return !canceladoDeVerdad(r); });
+            if (!filas.length) {
+                err.textContent = `El ${diaBonito(dia)} no salió ningún bus del aeropuerto.`;
+                err.hidden = false;
+                return;
+            }
+            bajarArchivo(libroPasajeros(dia, filas), `Pasajeros aeropuerto ${dia}.xlsx`);
+            cerrarExcel();
+            showToast("ok", `Listo: el Excel del ${diaBonito(dia)} con ${filas.length} salida${filas.length === 1 ? "" : "s"}`);
+        } catch (e) {
+            const m = (e && (e.message || e.msg)) || String(e);
+            err.textContent = /fetch|network|Failed|Load failed/i.test(m) ? "No hubo conexión. Intente otra vez."
+                : /statement timeout|57014/i.test(m) ? "La base de datos tardó mucho en responder. Intente otra vez." : m;
+            err.hidden = false;
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "Descargar";
+        }
+    }
+
+    function initExcel() {
+        const modal = document.getElementById("excelModal");
+        const btn = document.getElementById("btnExcel");
+        if (!modal || !btn) return;
+        const f = document.getElementById("excelFecha");
+        btn.addEventListener("click", abrirExcel);
+        modal.querySelectorAll("[data-close]").forEach(function (b) { b.addEventListener("click", cerrarExcel); });
+        modal.addEventListener("click", function (ev) { if (ev.target === modal) cerrarExcel(); });
+        document.addEventListener("keydown", function (ev) {
+            if (ev.key === "Escape" && !modal.hidden) cerrarExcel();
+        });
+        document.getElementById("excelDescargar").addEventListener("click", descargarExcel);
+        f.addEventListener("change", function () {
+            document.getElementById("excelError").hidden = true;
+            pintarAtajosExcel();
+        });
+        f.addEventListener("input", pintarAtajosExcel);
+        modal.querySelectorAll("[data-excel-dia]").forEach(function (b) {
+            b.addEventListener("click", function () {
+                const hoy = diaOperativoHoy();
+                f.value = b.getAttribute("data-excel-dia") === "hoy" ? hoy : diaMenos(hoy, 1);
+                document.getElementById("excelError").hidden = true;
+                pintarAtajosExcel();
+            });
+        });
+    }
+
     function initGestor() {
+        initExcel();
         const modal = document.getElementById("pasModal");
         modal.querySelectorAll("[data-close]").forEach(function (b) { b.addEventListener("click", cerrarColocar); });
         modal.addEventListener("click", function (ev) { if (ev.target === modal) cerrarColocar(); });

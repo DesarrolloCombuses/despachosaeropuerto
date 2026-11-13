@@ -427,3 +427,80 @@ table.pg-tabla td.pg-celda {
 .modo-gestor .login-logo svg path {
     fill: #0f766e;
 }
+
+/* ---- v1.32.0: el Excel de un día ---- */
+/* La pestaña Realizados no tenía margen: el título y "Solo los que faltan" quedaban pegados al borde */
+.modo-gestor #paneRealizados {
+    background: var(--bg);
+    padding: 16px 20px;
+    gap: 12px;
+}
+@media (max-width: 560px) {
+    .modo-gestor #paneRealizados {
+        padding: 10px;
+        gap: 10px;
+    }
+}
+.btn-excel {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--success-600);
+    background: var(--surface);
+    color: var(--success-700);
+    border-radius: 8px;
+    padding: 7px 12px;
+    font: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.btn-excel:hover {
+    background: var(--success-50);
+}
+.excel-escoger {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+.excel-fecha {
+    font: inherit;
+    font-size: 16px;
+    padding: 8px 10px;
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    min-width: 0;
+}
+.excel-atajos {
+    display: flex;
+    gap: 8px;
+}
+.excel-atajo {
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    color: var(--text);
+    border-radius: 999px;
+    padding: 5px 14px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+.excel-atajo.activo {
+    border-color: var(--primary-600);
+    background: var(--primary-50);
+    color: var(--primary-700);
+    font-weight: 700;
+}
+.excel-atajo:disabled {
+    opacity: 0.45;
+    cursor: default;
+}
+.excel-nota {
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--text-secondary);
+}

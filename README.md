@@ -27,6 +27,10 @@ La misma app para los **gestores del aeropuerto**, con el mismo código (`window
   pasajeros.
 - Lo que la app de los despachadores lee con sesión (despachos, contadores y flota), aquí sale por la función
   `aeropuerto_gestor_datos` (solo lectura).
+- **Excel del día** (v1.32.0): el botón *Excel* de Realizados baja un `.xlsx` de un día de la operación (2:30 a 2:30),
+  con la hoja *Salidas* (una fila por bus que salió del aeropuerto: día, hora, bus, placa, itinerario, a dónde va,
+  pasajeros, estado, quién y cuándo) y la hoja *Resumen* (totales por itinerario). Lo arma el celular
+  (`js/excel-xlsx.js`, sin librerías) con lo que trae `aeropuerto_gestor_dia(p_dni, p_fecha)`.
 - **Se instala en el celular** como app aparte, "Gestores JMC", con ícono verde (`manifest-gestores.webmanifest`,
   `icons/gestores-*`). En Android sale el aviso "Instalar"; en el iPhone, la ayuda de "Compartir → Agregar a inicio".
 
@@ -116,6 +120,7 @@ web/
 ├── aplicacion-aeropuerto.html  Página principal
 ├── gestores.html               Versión de los gestores (cédula, sin despachar, pasajeros)
 ├── css/gestores.css            Estilos que solo usa gestores.html
+├── js/excel-xlsx.js            Arma el Excel (.xlsx) del día en la versión de los gestores
 ├── css/style.css               Estilos
 ├── js/config.js                Credenciales Supabase
 └── js/main.js                  Lógica (carga + render + realtime)
