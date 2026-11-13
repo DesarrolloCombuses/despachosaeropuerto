@@ -228,7 +228,7 @@
                 </div>
                 <div class="despachos-actions">
                     <input type="search" id="searchRealizados" class="search-input"
-                        placeholder="Buscar bus, vuelo o destino..." autocomplete="off">
+                        placeholder="Buscar bus o destino..." autocomplete="off">
                     <label class="filter-toggle">
                         <input type="checkbox" id="filterRealizadosActivos">
                         <span>Solo los que faltan</span>
@@ -309,16 +309,10 @@
                 <div id="pasBus" class="pas-bus"></div>
                 <div id="pasYa" class="pas-ya"></div>
                 <div class="form-row">
-                    <label for="pasBuscar">¿De qué vuelo?</label>
-                    <input id="pasBuscar" type="search" class="search-input" autocomplete="off"
-                        placeholder="Buscar otro vuelo, aerolínea o ciudad">
-                </div>
-                <div id="pasVuelos" class="pas-vuelos" role="radiogroup" aria-label="Vuelos"></div>
-                <div class="form-row">
                     <label for="pasNum">¿Cuántos pasajeros se fueron en este bus?</label>
                     <div class="pas-contador">
                         <button type="button" id="pasMenos" class="pas-btn" aria-label="Uno menos">−</button>
-                        <input id="pasNum" type="number" min="1" max="19" value="1" inputmode="numeric">
+                        <input id="pasNum" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="2" value="1" autocomplete="off">
                         <button type="button" id="pasMas" class="pas-btn" aria-label="Uno más">+</button>
                     </div>
                     <div id="pasCupo" class="pas-cupo"></div>
@@ -327,7 +321,7 @@
             </div>
             <div class="modal-foot">
                 <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
-                <button type="button" id="pasGuardar" class="btn btn-primary" disabled>Guardar</button>
+                <button type="button" id="pasGuardar" class="btn btn-primary">Guardar</button>
             </div>
         </div>
     </div>

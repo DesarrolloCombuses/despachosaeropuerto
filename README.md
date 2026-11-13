@@ -21,13 +21,14 @@ La misma app para los **gestores del aeropuerto**, con el mismo código (`window
   GESTOR en el cargo.
 - Solo tienen **Mapa, Listas y Realizados** (Vuelos, Subida y Turnos van ocultas, para que sea liviana).
 - **No despachan, no cancelan ni ocultan**: no hay botones, y sin sesión la base tampoco lo permite.
-- En **Realizados** salen solo las salidas del aeropuerto de hoy. En cada una colocan cuántos pasajeros de qué vuelo se
-  fueron en ese bus (cupo 19). Arriba, un aviso dice qué buses salieron en las últimas 2 horas sin pasajeros anotados.
+- En **Realizados** salen solo las salidas del aeropuerto de hoy. En cada una ponen cuántos pasajeros se fueron en ese
+  bus (0 a 19, sin vuelo): va a la casilla "pasajeros" del despacho, la misma que ve el despachador, con constancia de
+  quién y cuándo (`aeropuerto_gestor_pasajeros`). Arriba, un aviso dice qué buses salieron en las últimas 2 horas sin
+  pasajeros.
 - Lo que la app de los despachadores lee con sesión (despachos, contadores y flota), aquí sale por la función
   `aeropuerto_gestor_datos` (solo lectura).
 - **Se instala en el celular** como app aparte, "Gestores JMC", con ícono verde (`manifest-gestores.webmanifest`,
   `icons/gestores-*`). En Android sale el aviso "Instalar"; en el iPhone, la ayuda de "Compartir → Agregar a inicio".
-  Lo anotado va a la misma hoja de la app del Personal (`vuelos_gestor_tablero` / `_anotar` / `_quitar`).
 
 ## Probar localmente
 

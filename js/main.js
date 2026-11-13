@@ -230,7 +230,6 @@
         }
         if (name === "realizados") {
             cargarRealizados();
-            if (GESTOR && !tableroGestor) cargarTableroGestor(true); // v1.30.1
         }
         if (name === "vuelos" && !vuelos.length && !vuelosLoading) {
             cargarVuelos();
@@ -2028,6 +2027,7 @@
                     .limit(500);
             });
             realizados = data || [];
+            realizadosListo = true;
             renderRealizados();
             renderSubida();
             renderMap();
@@ -3298,6 +3298,7 @@
     const RPC_GESTOR_TABLERO = "vuelos_gestor_tablero";
     const RPC_GESTOR_ANOTAR = "vuelos_gestor_anotar";
     const RPC_GESTOR_QUITAR = "vuelos_gestor_quitar";
+    const RPC_GESTOR_PASAJEROS = "aeropuerto_gestor_pasajeros";   // v1.31.0: los pasajeros de una salida, sin vuelo
     const AVISO_FALTAN_MS = 2 * 60 * 60 * 1000;      // el aviso de arriba: lo que salió en las últimas 2 horas
     const VUELO_ANTES_MS = 150 * 60 * 1000;          // vuelos para un bus: aterrizaron hasta 2 h 30 antes de que saliera...
     const VUELO_DESPUES_MS = 10 * 60 * 1000;         // ...o hasta 10 min después (la hora del tablero no es exacta)
@@ -3312,8 +3313,7 @@
     let tableroEspera = 5000;
     let gestorRealizadosTimer = null;
     let pasSalida = null;            // la salida que se está llenando en la ventana
-    let pasVuelo = null;             // el vuelo escogido en la ventana
-    let pasLista = [];               // los vuelos que se ven en la ventana
+    let realizadosListo = false;     // v1.31.0: ya llegó la lista de salidas una vez
 
     // Para el despachador lee la tabla con su sesión; para el gestor, la función de la base con su cédula.
     async function consultar(que, consulta) {
@@ -3354,7 +3354,6 @@
                 tableroGestorError = "";
                 tableroEspera = 5000;
                 renderRealizados();
-                if (pasSalida && !document.getElementById("pasModal").hidden) pintarColocar();
                 return data;
             } catch (err) {
                 console.warn("Tablero de los gestores:", err);
@@ -3417,30 +3416,10 @@
         }).sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
     }
 
-    // Lo anotado, repartido en las salidas: cada anotación va a la salida de ese bus más cercana entre 1 h antes y
-    // 1 h 30 después de anotar (la misma regla de la pestaña Vuelos y de la app del Personal).
-    function anotadoPorSalida() {
-        const regs = (tableroGestor && tableroGestor.registros) || [];
-        const salidas = realizados.filter(function (r) { return esBajadaAeropuerto(r) && !canceladoDeVerdad(r); });
-        const mapa = {};
-        regs.forEach(function (g) {
-            const t = new Date(g.anotado_en).getTime();
-            if (isNaN(t)) return;
-            const n = soloNumeroBus(g.interno);
-            let mejor = null;
-            salidas.forEach(function (r) {
-                if (soloNumeroBus(r.interno) !== n) return;
-                const s = new Date(r.created_at).getTime();
-                if (isNaN(s) || s < t - BUS_SALIO_ANTES_MS || s > t + BUS_SALE_DESPUES_MS) return;
-                if (!mejor || Math.abs(s - t) < Math.abs(mejor.s - t)) mejor = { s: s, r: r };
-            });
-            if (mejor) (mapa[mejor.r.id] = mapa[mejor.r.id] || []).push(g);
-        });
-        return mapa;
-    }
-
-    function sumaPasajeros(regs) {
-        return (regs || []).reduce(function (s, g) { return s + (Number(g.pasajeros) || 0); }, 0);
+    // v1.31.0 (sin vuelos): una salida ya tiene pasajeros si un gestor los puso (aunque sea 0: "salió vacío") o si la
+    // casilla del despacho tiene más de 0 (la pudo llenar el despachador en su Realizados).
+    function pasajerosPuestos(r) {
+        return !!r.gestor || (Number(r.pasajeros) || 0) > 0;
     }
 
     function renderRealizadosGestor() {
@@ -3451,24 +3430,21 @@
         const pagerInfo = document.getElementById("pagerInfo");
         const pagerPrev = document.getElementById("pagerPrev");
         const pagerNext = document.getElementById("pagerNext");
-        const listo = !!tableroGestor;
         const salidas = salidasDeHoy();
-        const porSalida = listo ? anotadoPorSalida() : {};
-        const faltan = listo ? salidas.filter(function (r) { return !porSalida[r.id]; }) : [];
-        pintarAvisoFaltan(faltan);
+        const faltan = salidas.filter(function (r) { return !pasajerosPuestos(r); });
+        const totalPas = salidas.reduce(function (s, r) { return s + (Number(r.pasajeros) || 0); }, 0);
+        pintarAvisoFaltan(realizadosListo ? faltan : []);
 
         if (badge) {
             badge.textContent = String(faltan.length);
             badge.classList.toggle("tab-badge-falta", faltan.length > 0);
-            badge.title = faltan.length + " sin pasajeros anotados";
+            badge.title = faltan.length + " sin pasajeros";
         }
         if (subtitle) {
-            subtitle.textContent = listo
+            subtitle.textContent = realizadosListo
                 ? `Hoy salieron ${salidas.length} bus${salidas.length === 1 ? "" : "es"} del aeropuerto · ` +
-                  `${salidas.length - faltan.length} con pasajeros · faltan ${faltan.length}`
-                : tableroGestorError
-                    ? "No llegó lo anotado por los gestores (" + tableroGestorError + "). Se vuelve a intentar solo..."
-                    : "Cargando lo anotado por los gestores...";
+                  `${totalPas} pasajero${totalPas === 1 ? "" : "s"} · faltan ${faltan.length}`
+                : "Cargando las salidas...";
         }
 
         const q = (realizadosSearch || "").toLowerCase().trim();
@@ -3476,13 +3452,13 @@
         if (q) {
             visibles = visibles.filter(function (r) {
                 return realizadoMatchesSearch(r, q) || destinoDe(r).toLowerCase().includes(q) ||
-                    (porSalida[r.id] || []).some(function (g) { return String(g.vuelo || "").toLowerCase().includes(q); });
+                    String(r.gestor || "").toLowerCase().includes(q);
             });
         }
         if (!visibles.length) {
             const txt = q ? "No hay resultados para su búsqueda"
-                : !listo ? "Cargando..."
-                : realizadosFiltroActivos ? "No falta ningún bus: todos tienen pasajeros anotados"
+                : !realizadosListo ? "Cargando las salidas..."
+                : realizadosFiltroActivos ? "No falta ningún bus: todos tienen los pasajeros puestos"
                 : "Hoy no ha salido ningún bus del aeropuerto";
             box.innerHTML = `<div class="loading">${escapeHtml(txt)}</div>`;
             if (pager) pager.hidden = true;
@@ -3502,28 +3478,20 @@
         }
 
         const filas = paginaItems.map(function (r) {
-            const regs = porSalida[r.id] || [];
-            const total = sumaPasajeros(regs);
-            const porVuelo = {};
-            regs.forEach(function (g) { porVuelo[g.vuelo] = (porVuelo[g.vuelo] || 0) + (Number(g.pasajeros) || 0); });
-            const detalle = Object.keys(porVuelo).map(function (v) {
-                return `<span class="pg-vuelo">${escapeHtml(v)} <b>${porVuelo[v]}</b></span>`;
-            }).join("");
-            const celda = !listo ? '<span class="muted">Cargando…</span>'
-                : total ? `<span class="pg-ok"><b>${total}</b> de ${CUPO_BUS}</span>${detalle}`
-                : '<span class="pg-falta">Faltan pasajeros</span>';
-            const cupo = CUPO_BUS - total;
-            const boton = !listo ? `<button type="button" class="btn-colocar" data-colocar="${escapeHtml(r.id)}">Colocar</button>`
-                : cupo > 0 ? `<button type="button" class="btn-colocar${total ? " btn-colocar-mas" : ""}" data-colocar="${escapeHtml(r.id)}">${total ? "Agregar" : "Colocar"}</button>`
-                : '<span class="muted pg-lleno">Lleno</span>';
+            const puesto = pasajerosPuestos(r);
+            const n = Number(r.pasajeros) || 0;
+            const quien = r.gestor ? `<span class="pg-quien">${escapeHtml(r.gestor)}</span>` : "";
+            const celda = !puesto ? '<span class="pg-falta">Faltan pasajeros</span>'
+                : n ? `<span class="pg-ok"><b>${n}</b> pasajero${n === 1 ? "" : "s"}</span>${quien}`
+                : `<span class="pg-ok pg-vacio">Salió vacío</span>${quien}`;
             return `
-                <tr class="${listo && !total ? "pg-fila-falta" : ""}">
+                <tr class="${puesto ? "" : "pg-fila-falta"}">
                     <td class="hora">${escapeHtml(horaCorta(r.created_at))}</td>
                     <td class="hace">${escapeHtml(humanizeAge(r.created_at))}</td>
                     <td class="interno">${escapeHtml(r.interno || "")}</td>
                     <td class="pg-destino">${escapeHtml(destinoDe(r))}</td>
                     <td class="pg-celda">${celda}</td>
-                    <td class="pg-accion">${boton}</td>
+                    <td class="pg-accion"><button type="button" class="btn-colocar${puesto ? " btn-colocar-mas" : ""}" data-colocar="${escapeHtml(r.id)}">${puesto ? "Cambiar" : "Colocar"}</button></td>
                 </tr>
             `;
         }).join("");
@@ -3556,120 +3524,44 @@
             `en las últimas 2 horas. ${lista}`;
     }
 
-    // ---- La ventana "Colocar pasajeros" ----
-    function vueloLlega(v) {
-        const t = new Date(v.llega).getTime();
-        return isNaN(t) ? null : t;
-    }
-
-    function totalDelVuelo(v) {
-        const regs = (tableroGestor && tableroGestor.registros) || [];
-        return sumaPasajeros(regs.filter(function (g) {
-            return String(g.fecha).slice(0, 10) === String(v.fecha).slice(0, 10) &&
-                String(g.vuelo).toUpperCase() === String(v.vuelo).toUpperCase();
-        }));
-    }
-
-    function mismoVuelo(a, b) {
-        return a && b && String(a.fecha).slice(0, 10) === String(b.fecha).slice(0, 10) &&
-            String(a.vuelo).toUpperCase() === String(b.vuelo).toUpperCase();
-    }
-
-    async function abrirColocar(id) {
+    // ---- La ventana "Colocar pasajeros" (v1.31.0: sin vuelos, solo el número) ----
+    function abrirColocar(id) {
         const r = realizados.find(function (x) { return x.id === id; });
         if (!r) return;
-        if (!tableroGestor) {
-            // v1.30.1: todavía no había llegado lo anotado: se trae ya
-            showToast("ok", "Trayendo los vuelos...");
-            await cargarTableroGestor(true);
-            if (!tableroGestor) {
-                showToast("err", "No llegaron los vuelos: " + (tableroGestorError || "sin conexión") + ". Intente en un momento.");
-                return;
-            }
-        }
         pasSalida = r;
-        pasVuelo = null;
-        document.getElementById("pasBuscar").value = "";
-        document.getElementById("pasNum").value = "1";
+        const num = document.getElementById("pasNum");
+        num.value = String(pasajerosPuestos(r) ? (Number(r.pasajeros) || 0) : 1);
         document.getElementById("pasError").hidden = true;
         pintarColocar();
         document.getElementById("pasModal").hidden = false;
+        setTimeout(function () { try { num.focus(); num.select(); } catch (_) {} }, 60);
     }
 
     function cerrarColocar() {
         document.getElementById("pasModal").hidden = true;
         pasSalida = null;
-        pasVuelo = null;
     }
 
     function pintarColocar() {
         const r = pasSalida;
-        if (!r || !tableroGestor) return;
-        const s = new Date(r.created_at).getTime();
-        const regs = anotadoPorSalida()[r.id] || [];
-        const total = sumaPasajeros(regs);
-        const cupo = Math.max(0, CUPO_BUS - total);
-
+        if (!r) return;
         document.getElementById("pasBus").innerHTML =
             `Bus <b>${escapeHtml(r.interno || "")}</b> · salió a las ${escapeHtml(horaCorta(r.created_at))}` +
             (destinoDe(r) ? ` a <b>${escapeHtml(destinoDe(r))}</b>` : "");
-        document.getElementById("pasYa").innerHTML = regs.length
-            ? `<div class="pas-ya-tit">Ya lleva <b>${total}</b> de ${CUPO_BUS}</div>` + regs.map(function (g) {
-                return `<div class="pas-ya-fila"><span><b>${escapeHtml(g.vuelo || "")}</b> · ${Number(g.pasajeros) || 0} pas.` +
-                    (g.nombre ? ` · ${escapeHtml(g.nombre)}` : "") + `</span>` +
-                    (g.se_puede_quitar && g.id_local
-                        ? `<button type="button" class="btn-quitar" data-quitar="${escapeHtml(g.id_local)}">Quitar</button>` : "") +
-                    `</div>`;
-            }).join("")
-            : '<div class="pas-ya-tit">Todavía no tiene pasajeros anotados</div>';
-
-        const q = normalizar(document.getElementById("pasBuscar").value || "");
-        const todos = (tableroGestor.vuelos || []).filter(function (v) { return vueloLlega(v) != null; });
-        let lista;
-        if (q) {
-            lista = todos.filter(function (v) { return normalizar([v.vuelo, v.aerolinea, v.ciudad].join(" ")).includes(q); });
-        } else {
-            lista = todos.filter(function (v) {
-                const t = vueloLlega(v);
-                return t >= s - VUELO_ANTES_MS && t <= s + VUELO_DESPUES_MS;
-            });
-        }
-        lista.sort(function (a, b) {
-            return Math.abs(vueloLlega(a) + SALE_TRAS_ATERRIZAR_MS - s) - Math.abs(vueloLlega(b) + SALE_TRAS_ATERRIZAR_MS - s);
-        });
-        lista = lista.slice(0, 12);
-        if (pasVuelo && !lista.some(function (v) { return mismoVuelo(v, pasVuelo); })) lista.unshift(pasVuelo);
-        pasLista = lista;
-        const box = document.getElementById("pasVuelos");
-        box.innerHTML = lista.length ? lista.map(function (v, i) {
-            const sel = mismoVuelo(v, pasVuelo);
-            const ya = totalDelVuelo(v);
-            return `<button type="button" class="pas-vuelo${sel ? " sel" : ""}" role="radio" aria-checked="${sel}" data-i="${i}">` +
-                `<span class="pas-vuelo-cod">${escapeHtml(v.vuelo || "")}</span>` +
-                `<span class="pas-vuelo-de">${escapeHtml(v.aerolinea || "")}${v.ciudad ? " · desde " + escapeHtml(v.ciudad) : ""}</span>` +
-                `<span class="pas-vuelo-hora">${escapeHtml(v.estado || "Llega")} ${escapeHtml(horaCorta(vueloLlega(v)))}` +
-                `${ya ? " · ya " + ya + " en buses" : ""}</span></button>`;
-        }).join("")
-            : `<div class="muted pas-nada">${q ? "Ningún vuelo de hoy con ese nombre." : "No hay vuelos que hayan aterrizado cerca de esa hora: búsquelo arriba."}</div>`;
-
-        const num = document.getElementById("pasNum");
-        num.max = String(Math.max(1, cupo));
-        let n = parseInt(num.value, 10);
-        if (!Number.isFinite(n) || n < 1) n = 1;
-        if (cupo && n > cupo) n = cupo;
-        num.value = String(n);
-        document.getElementById("pasCupo").textContent = cupo
-            ? `Le caben ${cupo} más (el cupo es ${CUPO_BUS})`
-            : `El bus ya está lleno (${CUPO_BUS})`;
-        document.getElementById("pasGuardar").disabled = !cupo || !pasVuelo;
+        const n = Number(r.pasajeros) || 0;
+        document.getElementById("pasYa").innerHTML = pasajerosPuestos(r)
+            ? `Ya tiene <b>${n ? n + " pasajero" + (n === 1 ? "" : "s") : "0 (salió vacío)"}</b>` +
+              (r.gestor ? ` · los puso ${escapeHtml(r.gestor)}` : "") + ". Si lo cambia, queda el número nuevo."
+            : "Todavía no tiene pasajeros.";
+        document.getElementById("pasCupo").textContent = "De 0 a " + CUPO_BUS + ". Si el bus salió vacío, ponga 0.";
     }
 
     function cambiarNumPasajeros(delta) {
+        document.getElementById("pasError").hidden = true;
         const num = document.getElementById("pasNum");
-        const max = parseInt(num.max, 10) || CUPO_BUS;
         let n = (parseInt(num.value, 10) || 0) + delta;
-        if (n < 1) n = 1;
-        if (n > max) n = max;
+        if (n < 0) n = 0;
+        if (n > CUPO_BUS) n = CUPO_BUS;
         num.value = String(n);
     }
 
@@ -3681,15 +3573,14 @@
 
     async function guardarColocar() {
         const r = pasSalida;
-        const v = pasVuelo;
         const err = document.getElementById("pasError");
         const btn = document.getElementById("pasGuardar");
         err.hidden = true;
         if (!r) return;
-        if (!v) { err.textContent = "Escoja el vuelo."; err.hidden = false; return; }
-        const n = parseInt(document.getElementById("pasNum").value, 10);
-        if (!Number.isFinite(n) || n < 1 || n > CUPO_BUS) {
-            err.textContent = "Escriba cuántos pasajeros (de 1 a " + CUPO_BUS + ").";
+        const texto = String(document.getElementById("pasNum").value || "").trim();
+        const n = /^[0-9]{1,2}$/.test(texto) ? parseInt(texto, 10) : NaN;
+        if (!Number.isFinite(n) || n < 0 || n > CUPO_BUS) {
+            err.textContent = "Escriba cuántos pasajeros (de 0 a " + CUPO_BUS + ").";
             err.hidden = false;
             return;
         }
@@ -3701,51 +3592,27 @@
         btn.disabled = true;
         btn.textContent = "Guardando...";
         try {
-            const { data, error } = await client.rpc(RPC_GESTOR_ANOTAR, {
-                p_id_local: "aero-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10),
+            const { data, error } = await client.rpc(RPC_GESTOR_PASAJEROS, {
                 p_dni: gestorYo.dni,
-                p_fecha: String(v.fecha).slice(0, 10),
-                p_vuelo: v.vuelo,
-                p_interno: soloNumeroBus(r.interno) || String(r.interno || ""),
+                p_despacho: r.id,
                 p_pasajeros: n,
-                p_anotado_en: r.created_at,   // la hora en que salió: así cuenta para esa salida
                 p_dispositivo: "app aeropuerto gestores " + (cfg.APP_VERSION || ""),
             });
             if (error) throw error;
             if (!data || !data.ok) throw new Error("No se guardó. Intente otra vez.");
+            r.pasajeros = n;
+            r.gestor = gestorYo.nombre || "Usted";
             const bus = r.interno;
             cerrarColocar();
-            showToast("ok", `Listo: ${n} pasajero${n === 1 ? "" : "s"} del ${v.vuelo} en el bus ${bus}`);
-            await cargarTableroGestor(true);
-            if (activeTab === "vuelos") cargarVuelos();
+            showToast("ok", n ? `Listo: ${n} pasajero${n === 1 ? "" : "s"} en el bus ${bus}` : `Listo: el bus ${bus} salió vacío`);
+            renderRealizados();
+            cargarRealizados();
         } catch (e) {
             err.textContent = mensajeError(e);
             err.hidden = false;
         } finally {
             btn.textContent = "Guardar";
-            btn.disabled = !pasVuelo;
-        }
-    }
-
-    async function quitarAnotacion(idLocal) {
-        const ok = await mostrarConfirmacion({
-            titulo: "Quitar lo anotado",
-            mensaje: "Se quita lo que usted anotó en este bus. Después lo puede volver a anotar bien.",
-            textoConfirmar: "Sí, quitar",
-            textoCancelar: "No",
-            tipo: "warn",
-        });
-        if (!ok) return;
-        try {
-            const { data, error } = await client.rpc(RPC_GESTOR_QUITAR, { p_dni: gestorYo.dni, p_id_local: idLocal });
-            if (error) throw error;
-            if (!data || !data.ok) throw new Error("No se quitó. Intente otra vez.");
-            showToast("ok", "Quitado");
-            await cargarTableroGestor(true);
-            pintarColocar();
-            if (activeTab === "vuelos") cargarVuelos();
-        } catch (e) {
-            showToast("err", mensajeError(e));
+            btn.disabled = false;
         }
     }
 
@@ -3756,20 +3623,14 @@
         document.addEventListener("keydown", function (ev) {
             if (ev.key === "Escape" && !modal.hidden && document.getElementById("confirmModal").hidden) cerrarColocar();
         });
-        document.getElementById("pasBuscar").addEventListener("input", pintarColocar);
         document.getElementById("pasMenos").addEventListener("click", function () { cambiarNumPasajeros(-1); });
         document.getElementById("pasMas").addEventListener("click", function () { cambiarNumPasajeros(1); });
         document.getElementById("pasGuardar").addEventListener("click", guardarColocar);
-        document.getElementById("pasVuelos").addEventListener("click", function (ev) {
-            const b = ev.target.closest ? ev.target.closest(".pas-vuelo") : null;
-            if (!b) return;
-            pasVuelo = pasLista[Number(b.getAttribute("data-i"))] || null;
+        document.getElementById("pasNum").addEventListener("input", function () {
             document.getElementById("pasError").hidden = true;
-            pintarColocar();
         });
-        document.getElementById("pasYa").addEventListener("click", function (ev) {
-            const b = ev.target.closest ? ev.target.closest("[data-quitar]") : null;
-            if (b) quitarAnotacion(b.getAttribute("data-quitar"));
+        document.getElementById("pasNum").addEventListener("keydown", function (ev) {
+            if (ev.key === "Enter") { ev.preventDefault(); guardarColocar(); }
         });
         document.getElementById("avisoFaltanVer").addEventListener("click", function () {
             const chk = document.getElementById("filterRealizadosActivos");
@@ -3778,16 +3639,9 @@
             realizadosPage = 1;
             setActiveTab("realizados");
         });
-        cargarTableroGestor(true);
-        // cada minuto: lo que anotan los demás gestores
-        setInterval(function () {
-            if (navigator.onLine && !document.hidden) cargarTableroGestor(true);
-        }, 60000);
+        // v1.31.0: ya no se piden los vuelos; al volver a la app, la lista de salidas al día
         document.addEventListener("visibilitychange", function () {
-            if (!document.hidden && navigator.onLine) {
-                cargarTableroGestor(true);
-                cargarRealizados();
-            }
+            if (!document.hidden && navigator.onLine) cargarRealizados();
         });
     }
 
