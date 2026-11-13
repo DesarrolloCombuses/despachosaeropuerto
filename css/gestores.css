@@ -1,0 +1,386 @@
+/* ============================================================================
+   Versión de los GESTORES (gestores.html, v1.30.0)
+   ----------------------------------------------------------------------------
+   Solo la carga gestores.html. Quita lo de despachar (Asignar, ocultar,
+   cancelar), pinta el aviso de "faltan pasajeros", la tabla de salidas del
+   aeropuerto y la ventana para colocar los pasajeros. El color nunca va solo:
+   el texto siempre dice lo que pasa.
+   ========================================================================== */
+
+/* ---- Nada de despachar ---- */
+.modo-gestor .btn-assign,
+.modo-gestor .btn-icon-hide,
+.modo-gestor .btn-cancelar,
+.modo-gestor #btnManualDispatch {
+    display: none !important;
+}
+.modo-gestor #tablaBox table.arrivals th:last-child,
+.modo-gestor #tablaBox table.arrivals td:last-child {
+    display: none;
+}
+.modo-gestor table.arrivals tbody tr.bus-row,
+.modo-gestor .turno-stop {
+    cursor: default;
+}
+
+/* Listas: sin la columna Puesto (sale de los turnos, que el gestor no carga) */
+.modo-gestor #tablaBox table.arrivals th:nth-child(5),
+.modo-gestor #tablaBox table.arrivals td:nth-child(5) {
+    display: none;
+}
+
+/* ---- El número de la pestaña Realizados: cuántos faltan ---- */
+.tab-badge.tab-badge-falta {
+    background: var(--warning-500);
+    color: #fff;
+}
+
+/* ---- Aviso de arriba ---- */
+.aviso-faltan {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));
+    background: var(--warning-50);
+    border-bottom: 1px solid var(--warning-500);
+    color: var(--gray-800);
+    font-size: 13px;
+    line-height: 1.45;
+}
+.aviso-faltan[hidden] {
+    display: none;
+}
+.aviso-faltan .af-txt {
+    flex: 1 1 260px;
+    min-width: 0;
+}
+.aviso-faltan strong {
+    color: var(--warning-700);
+}
+.af-bus {
+    display: inline-block;
+    margin: 2px 2px 0 0;
+    padding: 1px 7px;
+    border-radius: 6px;
+    background: var(--surface);
+    border: 1px solid var(--warning-500);
+    font-size: 12px;
+    white-space: nowrap;
+}
+.af-mas {
+    white-space: nowrap;
+    color: var(--text-secondary);
+}
+.aviso-faltan .af-btn {
+    background: var(--warning-600);
+    border-color: var(--warning-600);
+    color: #fff;
+    white-space: nowrap;
+}
+.aviso-faltan .af-btn:hover {
+    background: var(--warning-700);
+}
+
+/* ---- Tabla de salidas del aeropuerto ---- */
+table.pg-tabla tr.pg-fila-falta td {
+    background: var(--warning-50);
+}
+table.pg-tabla td.pg-celda {
+    min-width: 150px;
+}
+.pg-falta {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--warning-500);
+    border-left-width: 4px;
+    background: var(--surface);
+    color: var(--warning-700);
+    font-weight: 700;
+    font-size: 12px;
+    white-space: nowrap;
+}
+.pg-ok {
+    display: inline-block;
+    margin-right: 6px;
+    color: var(--success-700);
+    font-size: 12px;
+    white-space: nowrap;
+}
+.pg-ok b {
+    font-size: 16px;
+    font-variant-numeric: tabular-nums;
+}
+.pg-vuelo {
+    display: inline-block;
+    margin: 2px 4px 0 0;
+    padding: 1px 7px;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    border-left: 4px solid var(--success-600);
+    background: var(--surface);
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+.btn-colocar {
+    border: 1px solid var(--primary-600);
+    background: var(--primary-600);
+    color: #fff;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.btn-colocar:hover {
+    background: var(--primary-700);
+}
+.btn-colocar.btn-colocar-mas {
+    background: var(--surface);
+    color: var(--primary-700);
+}
+.pg-lleno {
+    font-size: 12px;
+}
+
+/* El celular: la tabla general esconde columnas y vuelve la última una flecha.
+   Aquí la columna de pasajeros y el botón son lo importante. */
+@media (max-width: 600px) {
+    table.pg-tabla th:last-child,
+    table.pg-tabla td:last-child {
+        width: auto;
+        text-align: right;
+    }
+    table.pg-tabla td:last-child::after {
+        content: none;
+    }
+}
+@media (max-width: 560px) {
+    table.pg-tabla th:nth-child(5),
+    table.pg-tabla td:nth-child(5) {
+        display: table-cell;
+    }
+    table.pg-tabla th:nth-child(4),
+    table.pg-tabla td:nth-child(4) {
+        display: none;
+    }
+    table.pg-tabla td.pg-celda {
+        min-width: 0;
+    }
+}
+@media (max-width: 380px) {
+    table.pg-tabla th:nth-child(3),
+    table.pg-tabla td:nth-child(3) {
+        display: table-cell;
+    }
+}
+
+/* ---- Ventana "Colocar pasajeros" ---- */
+.pas-modal .modal-body {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.pas-bus {
+    font-size: 15px;
+    color: var(--text);
+}
+.pas-ya {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 10px;
+    background: var(--surface-2);
+    font-size: 13px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.pas-ya-tit {
+    color: var(--text-secondary);
+}
+.pas-ya-fila {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+.btn-quitar {
+    border: 1px solid var(--error-500);
+    background: var(--surface);
+    color: var(--error-600);
+    border-radius: 6px;
+    padding: 3px 10px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+.pas-vuelos {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 36vh;
+    overflow-y: auto;
+    padding: 2px;
+}
+.pas-vuelo {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    align-items: baseline;
+    text-align: left;
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: var(--surface);
+    font: inherit;
+    cursor: pointer;
+}
+.pas-vuelo:hover {
+    border-color: var(--primary-500);
+}
+.pas-vuelo.sel {
+    border: 2px solid var(--primary-600);
+    background: var(--primary-50);
+    padding: 8px 11px;
+}
+.pas-vuelo-cod {
+    font-weight: 800;
+    font-size: 15px;
+    color: var(--text);
+}
+.pas-vuelo-de {
+    color: var(--text-secondary);
+    font-size: 12.5px;
+    min-width: 0;
+}
+.pas-vuelo-hora {
+    grid-column: 1 / -1;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+.pas-nada {
+    font-size: 13px;
+    padding: 6px 2px;
+}
+.pas-contador {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.pas-contador input {
+    width: 76px;
+    text-align: center;
+    font-size: 22px;
+    font-weight: 800;
+    padding: 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+}
+.pas-btn {
+    width: 46px;
+    height: 46px;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    background: var(--surface);
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--primary-700);
+    cursor: pointer;
+}
+.pas-cupo {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+}
+
+/* ---- Instalar en el celular ---- */
+.instalar-banner {
+    position: fixed;
+    left: max(12px, env(safe-area-inset-left, 0px));
+    right: max(12px, env(safe-area-inset-right, 0px));
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    z-index: 3100;                       /* encima de la pantalla de la cédula */
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 520px;
+    margin: 0 auto;
+    padding: 10px 10px 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-left: 5px solid #0f766e;
+    border-radius: 14px;
+    box-shadow: 0 12px 30px -12px rgba(16, 24, 40, 0.35);
+}
+.instalar-banner[hidden] {
+    display: none;
+}
+.instalar-banner img {
+    border-radius: 9px;
+    flex: none;
+}
+.instalar-banner .ib-txt {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.35;
+}
+.instalar-banner .ib-txt strong {
+    font-size: 14px;
+    color: var(--text);
+}
+.instalar-banner #btnInstalar {
+    background: #0f766e;
+    border-color: #0f766e;
+    white-space: nowrap;
+}
+.ib-cerrar {
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    padding: 6px;
+    cursor: pointer;
+    border-radius: 8px;
+}
+.instalar-ayuda {
+    z-index: 3200;                       /* encima del aviso y de la pantalla de la cédula */
+}
+.ia-cuerpo h3 {
+    font-size: 15px;
+    margin: 0 0 6px;
+    color: var(--text);
+}
+.ia-cuerpo ol {
+    margin: 0 0 6px;
+    padding-left: 20px;
+    display: grid;
+    gap: 6px;
+    font-size: 14px;
+    line-height: 1.45;
+}
+.ia-cuerpo section + section {
+    margin-top: 14px;
+}
+.ia-nota {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    margin: 6px 0 0;
+}
+
+/* El verde de los gestores (el mismo del ícono), para no confundirla con la de los despachadores */
+.modo-gestor .logo {
+    background: #0f766e;
+}
+.modo-gestor .login-logo {
+    background: #ccfbf1;
+}
+.modo-gestor .login-logo svg path {
+    fill: #0f766e;
+}

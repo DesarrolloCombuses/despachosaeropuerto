@@ -5,7 +5,7 @@
 // - Tiles del mapa (OSM):               Network First con fallback a cache
 // - API Supabase REST + Edge Functions: Network Only (datos frescos siempre)
 
-const VERSION = "v1.29.1";
+const VERSION = "v1.30.0";
 const CACHE_APP = "jmc-app-" + VERSION;
 const CACHE_CDN = "jmc-cdn-" + VERSION;
 const CACHE_TILES = "jmc-tiles-" + VERSION;
@@ -15,19 +15,27 @@ const APP_SHELL = [
     "./",
     "./index.html",
     "./aplicacion-aeropuerto.html",
+    "./gestores.html",
     "./css/style.css",
     "./css/pantalla-chica.css",
     "./css/mapa-enturnes.css",
     "./css/sin-conductor.css",
     "./css/ya-en-la-lista.css",
     "./css/vuelos-pasajeros.css",
+    "./css/gestores.css",
     "./js/config.js",
     "./js/main.js",
     "./manifest.webmanifest",
+    "./manifest-gestores.webmanifest",
     "./icons/favicon.svg",
     "./icons/icon-192.png",
     "./icons/icon-512.png",
     "./icons/icon-maskable-512.png",
+    "./icons/gestores.svg",
+    "./icons/gestores-192.png",
+    "./icons/gestores-512.png",
+    "./icons/gestores-maskable-512.png",
+    "./icons/gestores-apple-180.png",
 ];
 
 // CDN externos: los precacheamos en una caché aparte durante el install

@@ -13,6 +13,22 @@ La web:
 - Se suscribe a Realtime: cualquier cambio se refleja al instante (sin polling).
 - Refresca "hace X min" cada minuto sin pedir datos al servidor.
 
+## Versión de los gestores (`gestores.html`, desde v1.30.0)
+
+La misma app para los **gestores del aeropuerto**, con el mismo código (`window.MODO_GESTOR = true`):
+
+- Entran con su **cédula**, sin clave y **sin sesión**, como en la app del Personal. Solo entra alguien VINCULADO con
+  GESTOR en el cargo.
+- Solo tienen **Mapa, Listas y Realizados** (Vuelos, Subida y Turnos van ocultas, para que sea liviana).
+- **No despachan, no cancelan ni ocultan**: no hay botones, y sin sesión la base tampoco lo permite.
+- En **Realizados** salen solo las salidas del aeropuerto de hoy. En cada una colocan cuántos pasajeros de qué vuelo se
+  fueron en ese bus (cupo 19). Arriba, un aviso dice qué buses salieron en las últimas 2 horas sin pasajeros anotados.
+- Lo que la app de los despachadores lee con sesión (despachos, contadores y flota), aquí sale por la función
+  `aeropuerto_gestor_datos` (solo lectura).
+- **Se instala en el celular** como app aparte, "Gestores JMC", con ícono verde (`manifest-gestores.webmanifest`,
+  `icons/gestores-*`). En Android sale el aviso "Instalar"; en el iPhone, la ayuda de "Compartir → Agregar a inicio".
+  Lo anotado va a la misma hoja de la app del Personal (`vuelos_gestor_tablero` / `_anotar` / `_quitar`).
+
 ## Probar localmente
 
 Abre `aplicacion-aeropuerto.html` directamente en el navegador. **Pero hay una limitación**: los navegadores modernos no permiten `file://` para algunos features. Mejor levantar un servidor simple:
@@ -97,6 +113,8 @@ Si alguien intentara escribir desde la web, Supabase rechaza con 401.
 web/
 ├── index.html                  Redirección a aplicacion-aeropuerto.html
 ├── aplicacion-aeropuerto.html  Página principal
+├── gestores.html               Versión de los gestores (cédula, sin despachar, pasajeros)
+├── css/gestores.css            Estilos que solo usa gestores.html
 ├── css/style.css               Estilos
 ├── js/config.js                Credenciales Supabase
 └── js/main.js                  Lógica (carga + render + realtime)

@@ -1,0 +1,49 @@
+{
+    "name": "Aeropuerto JMC · Gestores",
+    "short_name": "Gestores JMC",
+    "description": "Versión de los gestores: el aeropuerto en vivo y los pasajeros de cada vuelo en su bus - Combuses",
+    "id": "./gestores.html",
+    "lang": "es-CO",
+    "dir": "ltr",
+    "start_url": "./gestores.html",
+    "scope": "./gestores.html",
+    "display": "standalone",
+    "display_override": [
+        "standalone",
+        "minimal-ui"
+    ],
+    "orientation": "any",
+    "theme_color": "#0f766e",
+    "background_color": "#f8f9fb",
+    "categories": [
+        "business",
+        "productivity",
+        "travel"
+    ],
+    "icons": [
+        {
+            "src": "icons/gestores.svg",
+            "type": "image/svg+xml",
+            "sizes": "any",
+            "purpose": "any"
+        },
+        {
+            "src": "icons/gestores-192.png",
+            "type": "image/png",
+            "sizes": "192x192",
+            "purpose": "any"
+        },
+        {
+            "src": "icons/gestores-512.png",
+            "type": "image/png",
+            "sizes": "512x512",
+            "purpose": "any"
+        },
+        {
+            "src": "icons/gestores-maskable-512.png",
+            "type": "image/png",
+            "sizes": "512x512",
+            "purpose": "maskable"
+        }
+    ]
+}

@@ -128,12 +128,22 @@
         return;
     }
 
+    // v1.30.0: gestores.html es la versión de los GESTORES. Entran con la cédula, como en la app del Personal, y SIN
+    // sesión: ven lo mismo que el despachador pero no despachan, no cancelan ni ocultan (sin sesión la base tampoco
+    // los deja). En Realizados solo salen las salidas del aeropuerto, para colocar los pasajeros de cada vuelo.
+    const GESTOR = window.MODO_GESTOR === true;
+    const LS_GESTOR = "aero_gestor_yo";
+    let gestorYo = null; // { dni, nombre, cargo }
+
     const client = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
-        auth: {
-            persistSession: true,
-            autoRefreshToken: true,
-            detectSessionInUrl: false,
-        },
+        auth: GESTOR
+            // nunca toma la sesión de un despachador que haya entrado en este mismo navegador
+            ? { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "aero-gestores-sin-sesion" }
+            : {
+                persistSession: true,
+                autoRefreshToken: true,
+                detectSessionInUrl: false,
+            },
     });
 
     let currentUser = null;
@@ -164,7 +174,7 @@
     let conductores = [];
     let conductoresLoading = null;
     let realizados = [];
-    let realizadosFiltroActivos = true;
+    let realizadosFiltroActivos = !GESTOR;
     let realizadosChannel = null;
     let realizadosPage = 1;
     let realizadosSearch = "";
@@ -991,6 +1001,7 @@
         tablaBox.querySelectorAll('[data-action="ocultar"]').forEach(function (btn) {
             btn.addEventListener("click", async function (ev) {
                 ev.stopPropagation();
+                if (GESTOR) return; // v1.30.0: los gestores no ocultan
                 const vid = btn.getAttribute("data-vehicle-id");
                 const interno = btn.getAttribute("data-interno");
                 const llegada = btn.getAttribute("data-llegada");
@@ -1119,6 +1130,7 @@
     }
 
     function openAssignModal(row) {
+        if (GESTOR) return; // v1.30.0: los gestores no despachan
         const modal = document.getElementById("assignModal");
         document.getElementById("assignBus").textContent = row.interno || row.vehicle_id || "—";
 
@@ -1485,6 +1497,7 @@
     }
 
     async function cargarDespachos() {
+        if (GESTOR) return; // v1.30.0
         if (despachosLoading) return;
         if (!navigator.onLine) {
             document.getElementById("despachosBox").innerHTML =
@@ -1681,8 +1694,18 @@
     // vuelos sale igual que antes y se avisa en el subtítulo.
     async function cargarPasajerosVuelos(fechas) {
         try {
-            const { data, error } = await client.rpc(RPC_PASAJEROS_VUELOS, { p_fechas: fechas });
-            if (error) throw error;
+            let data;
+            if (GESTOR) {
+                // v1.30.0: el gestor no tiene sesión: lo anotado le llega en el tablero de los gestores
+                const tb = await cargarTableroGestor(false);
+                if (!tb) throw new Error("Sin el tablero de los gestores");
+                const quiero = new Set(fechas);
+                data = (tb.registros || []).filter(function (r) { return quiero.has(String(r.fecha || "").slice(0, 10)); });
+            } else {
+                const res = await client.rpc(RPC_PASAJEROS_VUELOS, { p_fechas: fechas });
+                if (res.error) throw res.error;
+                data = res.data;
+            }
             const mapa = {};
             (Array.isArray(data) ? data : []).forEach(function (r) {
                 const n = Number(r.pasajeros) || 0;
@@ -1714,7 +1737,7 @@
         let mejor = null;
         if (!isNaN(t)) {
             realizados.forEach(function (r) {
-                if (r.estado === "CANCELADO" || soloNumeroBus(r.interno) !== n) return;
+                if (canceladoDeVerdad(r) || soloNumeroBus(r.interno) !== n) return;
                 const baja = ITINERARIOS_BAJAN.has(String(r.itinerario_id || "")) ||
                     NOMBRES_BAJAN.has(normalizarItinerario(r.itinerario));
                 if (!baja) return;
@@ -1914,14 +1937,15 @@
         const subtitle = document.getElementById("turnosSubtitle");
         if (subtitle) subtitle.textContent = "Cargando...";
         try {
-            if (!conductores.length) await cargarConductores();
+            if (!GESTOR && !conductores.length) await cargarConductores();
             const hoy = fechaLocalStr(new Date());
-            const { data, error } = await client
-                .from(cfg.TABLA_PROGRAMACION_TURNOS)
-                .select("*")
-                .eq("fecha", hoy)
-                .order("hora_entrada", { ascending: true, nullsFirst: false });
-            if (error) throw error;
+            const data = await consultar("turnos", function () {
+                return client
+                    .from(cfg.TABLA_PROGRAMACION_TURNOS)
+                    .select("*")
+                    .eq("fecha", hoy)
+                    .order("hora_entrada", { ascending: true, nullsFirst: false });
+            });
             turnos = data || [];
             renderTurnos();
             renderChipsAndTable(); // refresca la columna "Puesto" de Listas si ya estaba pintada
@@ -1957,12 +1981,12 @@
         }
 
         const filas = turnos.map(function (t) {
-            const nombre = nombrePorDni(t.dni);
+            const nombre = t.nombre || nombrePorDni(t.dni); // v1.30.0: al gestor el nombre le llega de la base, sin cédula
             return `
                 <tr>
                     <td>${escapeHtml(t.turno != null ? String(t.turno) : "—")}</td>
                     <td class="hora">${escapeHtml(formatHoraSimple(t.hora_entrada))} – ${escapeHtml(formatHoraSimple(t.hora_salida))}</td>
-                    <td>${escapeHtml(nombre || ("DNI " + (t.dni || "—")))}</td>
+                    <td>${escapeHtml(nombre || (t.dni ? "DNI " + t.dni : "—"))}</td>
                     <td class="interno">${escapeHtml(t.vehiculo || "—")}</td>
                     <td>${escapeHtml(t.base || "—")}</td>
                     <td>${escapeHtml(t.puesto || "—")}</td>
@@ -1995,12 +2019,13 @@
     // ============== Realizados (despachos_realizados) ==============
     async function cargarRealizados() {
         try {
-            const { data, error } = await client
-                .from(cfg.TABLA_REALIZADOS)
-                .select("*")
-                .order("created_at", { ascending: false })
-                .limit(500);
-            if (error) throw error;
+            const data = await consultar("realizados", function () {
+                return client
+                    .from(cfg.TABLA_REALIZADOS)
+                    .select("*")
+                    .order("created_at", { ascending: false })
+                    .limit(500);
+            });
             realizados = data || [];
             renderRealizados();
             renderSubida();
@@ -2014,6 +2039,15 @@
     }
 
     function suscribirRealizadosRealtime() {
+        if (GESTOR) {
+            // v1.30.0: sin sesión no llegan los cambios en vivo de esa tabla: se piden cada 30 s
+            if (!gestorRealizadosTimer) {
+                gestorRealizadosTimer = setInterval(function () {
+                    if (navigator.onLine && !document.hidden) cargarRealizados();
+                }, 30000);
+            }
+            return;
+        }
         if (realizadosChannel) return;
         realizadosChannel = client
             .channel("despachos_realizados_changes")
@@ -2053,6 +2087,7 @@
         const pagerPrev = document.getElementById("pagerPrev");
         const pagerNext = document.getElementById("pagerNext");
         if (!box) return;
+        if (GESTOR) { renderRealizadosGestor(); return; } // v1.30.0
 
         const q = (realizadosSearch || "").toLowerCase().trim();
         let visibles = realizadosFiltroActivos
@@ -2227,6 +2262,7 @@
         // Listeners para cancelar
         box.querySelectorAll('[data-action="cancelar"]').forEach(function (btn) {
             btn.addEventListener("click", async function () {
+                if (GESTOR) return; // v1.30.0: los gestores no cancelan
                 const id = btn.dataset.id;
                 const regId = btn.dataset.regId;
                 const mId = btn.dataset.mid;
@@ -2346,10 +2382,11 @@
     async function cargarPuntos() {
         if (!navigator.onLine || !cfg.TABLA_PUNTOS) return;
         try {
-            const { data, error } = await client.from(cfg.TABLA_PUNTOS)
-                .select("punto,orden,sentido,vienen,vienen_sin_arrancar,estan,en_fila,por_salir,por_zona,buses,foto_en")
-                .order("orden", { ascending: true });
-            if (error) throw error;
+            const data = await consultar("puntos", function () {
+                return client.from(cfg.TABLA_PUNTOS)
+                    .select("punto,orden,sentido,vienen,vienen_sin_arrancar,estan,en_fila,por_salir,por_zona,buses,foto_en")
+                    .order("orden", { ascending: true });
+            });
             puntosAhora = data || [];
         } catch (err) {
             console.warn("Error cargando la cuenta de los puntos:", err);
@@ -2363,8 +2400,9 @@
     async function cargarInternosFlota() {
         if (!navigator.onLine || !cfg.TABLA_FLOTA) return;
         try {
-            const { data, error } = await client.from(cfg.TABLA_FLOTA).select("mid,interno");
-            if (error) throw error;
+            const data = await consultar("flota", function () {
+                return client.from(cfg.TABLA_FLOTA).select("mid,interno");
+            });
             const mapa = {};
             (data || []).forEach(function (r) { if (r.mid && r.interno) mapa[r.mid] = String(r.interno); });
             internosFlota = mapa;
@@ -2769,6 +2807,7 @@
     }
 
     async function cargarConductores() {
+        if (GESTOR) return; // v1.30.0: la hoja trae cédulas; los nombres de los turnos llegan de la base
         if (conductoresLoading) return conductoresLoading;
         conductoresLoading = (async function () {
             try {
@@ -2793,6 +2832,7 @@
     }
 
     async function cargarVehiculos() {
+        if (GESTOR) return; // v1.30.0: solo hace falta para despachar
         if (vehiculosLoading) return vehiculosLoading;
         vehiculosLoading = (async function () {
             try {
@@ -3021,6 +3061,7 @@
     }
 
     function abrirManualModal() {
+        if (GESTOR) return; // v1.30.0: los gestores no despachan
         const modal = document.getElementById("manualModal");
         const selItin = document.getElementById("manualItin");
 
@@ -3247,8 +3288,635 @@
         }
     }
 
+    // ============== v1.30.0: versión de los GESTORES (gestores.html) ==============
+    // Entran con la cédula (como en la app del Personal) y sin sesión. Ven el mapa, las listas, los vuelos, la subida y
+    // los turnos igual que el despachador, pero no despachan, no cancelan ni ocultan. En Realizados solo salen las
+    // salidas del aeropuerto de hoy, para colocar los pasajeros de cada vuelo en el bus en que se fueron, y arriba se
+    // avisa qué buses salieron sin pasajeros anotados. Lo anotado va a la misma hoja de la app del Personal.
+    const RPC_GESTOR_DATOS = "aeropuerto_gestor_datos";
+    const RPC_GESTOR_TABLERO = "vuelos_gestor_tablero";
+    const RPC_GESTOR_ANOTAR = "vuelos_gestor_anotar";
+    const RPC_GESTOR_QUITAR = "vuelos_gestor_quitar";
+    const AVISO_FALTAN_MS = 2 * 60 * 60 * 1000;      // el aviso de arriba: lo que salió en las últimas 2 horas
+    const VUELO_ANTES_MS = 150 * 60 * 1000;          // vuelos para un bus: aterrizaron hasta 2 h 30 antes de que saliera...
+    const VUELO_DESPUES_MS = 10 * 60 * 1000;         // ...o hasta 10 min después (la hora del tablero no es exacta)
+    const SALE_TRAS_ATERRIZAR_MS = 25 * 60 * 1000;   // la gente sale unos 25 min después de aterrizar
+    const CUPO_BUS = 19;
+    const LS_MOTIVO_SALIDA = "aero_gestor_motivo";
+    let tableroGestor = null;        // lo de vuelos_gestor_tablero: vuelos del día y lo anotado
+    let tableroGestorEn = 0;
+    let tableroGestorCargando = null;
+    let gestorRealizadosTimer = null;
+    let pasSalida = null;            // la salida que se está llenando en la ventana
+    let pasVuelo = null;             // el vuelo escogido en la ventana
+    let pasLista = [];               // los vuelos que se ven en la ventana
+
+    // Para el despachador lee la tabla con su sesión; para el gestor, la función de la base con su cédula.
+    async function consultar(que, consulta) {
+        if (GESTOR) return leerGestor(que);
+        const { data, error } = await consulta();
+        if (error) throw error;
+        return data;
+    }
+
+    async function leerGestor(que) {
+        if (!gestorYo) throw new Error("Escriba su cédula");
+        const { data, error } = await client.rpc(RPC_GESTOR_DATOS, { p_dni: gestorYo.dni, p_que: que });
+        if (error) throw error;
+        if (data && (data.no_es || data.no_gestor)) {
+            sacarGestor("Su cédula ya no está habilitada para esta app.");
+            throw new Error("Cédula no habilitada");
+        }
+        if (!data || !data.ok) throw new Error((data && data.error) || "La base no respondió");
+        return data.filas || [];
+    }
+
+    // Los vuelos del día y lo anotado (el mismo tablero de la app del Personal). Si falla, se queda con lo último.
+    function cargarTableroGestor(forzar) {
+        if (!GESTOR || !gestorYo) return Promise.resolve(null);
+        if (!forzar && tableroGestor && Date.now() - tableroGestorEn < 20000) return Promise.resolve(tableroGestor);
+        if (tableroGestorCargando) return tableroGestorCargando;
+        tableroGestorCargando = (async function () {
+            try {
+                const { data, error } = await client.rpc(RPC_GESTOR_TABLERO, { p_dni: gestorYo.dni });
+                if (error) throw error;
+                if (data && (data.no_es || data.no_gestor)) {
+                    sacarGestor("Su cédula ya no está habilitada para esta app.");
+                    return null;
+                }
+                if (!data || !data.ok) throw new Error("El tablero no respondió");
+                tableroGestor = data;
+                tableroGestorEn = Date.now();
+                renderRealizados();
+                if (pasSalida && !document.getElementById("pasModal").hidden) pintarColocar();
+                return data;
+            } catch (err) {
+                console.warn("Tablero de los gestores:", err);
+                return tableroGestor;
+            } finally {
+                tableroGestorCargando = null;
+            }
+        })();
+        return tableroGestorCargando;
+    }
+
+    // El día de la operación va de 2:30 a 2:30.
+    function inicioDiaOperativo() {
+        const d = new Date();
+        const ini = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 2, 30, 0, 0);
+        if (d < ini) ini.setDate(ini.getDate() - 1);
+        return ini.getTime();
+    }
+
+    function horaCorta(t) {
+        const d = new Date(t);
+        return isNaN(d.getTime()) ? "" : d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit", hour12: false });
+    }
+
+    function esBajadaAeropuerto(r) {
+        return ITINERARIOS_BAJAN.has(String(r.itinerario_id || "")) || NOMBRES_BAJAN.has(normalizarItinerario(r.itinerario));
+    }
+
+    // Un "CANCELADO" que llega más de 1 hora después del despacho no es un cancelado: el despachador solo puede cancelar
+    // en la primera hora; después es el cierre del viaje (el 12-nov, los 82 así de las bajadas habían llegado a su
+    // destino). Para decir si el bus salió, solo cuenta el cancelado de verdad.
+    function canceladoDeVerdad(r) {
+        if (r.estado !== "CANCELADO") return false;
+        const c = new Date(r.cancelled_at).getTime();
+        const s = new Date(r.created_at).getTime();
+        if (isNaN(c) || isNaN(s)) return true;
+        return c - s <= CANCEL_WINDOW_MS;
+    }
+
+    function destinoDe(r) {
+        return DESTINO_BAJADA[String(r.itinerario_id || "")] || r.itinerario || "";
+    }
+
+    // Las salidas del aeropuerto de hoy (no canceladas de verdad), la más nueva primero.
+    function salidasDeHoy() {
+        const desde = inicioDiaOperativo();
+        return realizados.filter(function (r) {
+            const s = new Date(r.created_at).getTime();
+            return esBajadaAeropuerto(r) && !canceladoDeVerdad(r) && !isNaN(s) && s >= desde;
+        }).sort(function (a, b) { return new Date(b.created_at) - new Date(a.created_at); });
+    }
+
+    // Lo anotado, repartido en las salidas: cada anotación va a la salida de ese bus más cercana entre 1 h antes y
+    // 1 h 30 después de anotar (la misma regla de la pestaña Vuelos y de la app del Personal).
+    function anotadoPorSalida() {
+        const regs = (tableroGestor && tableroGestor.registros) || [];
+        const salidas = realizados.filter(function (r) { return esBajadaAeropuerto(r) && !canceladoDeVerdad(r); });
+        const mapa = {};
+        regs.forEach(function (g) {
+            const t = new Date(g.anotado_en).getTime();
+            if (isNaN(t)) return;
+            const n = soloNumeroBus(g.interno);
+            let mejor = null;
+            salidas.forEach(function (r) {
+                if (soloNumeroBus(r.interno) !== n) return;
+                const s = new Date(r.created_at).getTime();
+                if (isNaN(s) || s < t - BUS_SALIO_ANTES_MS || s > t + BUS_SALE_DESPUES_MS) return;
+                if (!mejor || Math.abs(s - t) < Math.abs(mejor.s - t)) mejor = { s: s, r: r };
+            });
+            if (mejor) (mapa[mejor.r.id] = mapa[mejor.r.id] || []).push(g);
+        });
+        return mapa;
+    }
+
+    function sumaPasajeros(regs) {
+        return (regs || []).reduce(function (s, g) { return s + (Number(g.pasajeros) || 0); }, 0);
+    }
+
+    function renderRealizadosGestor() {
+        const box = document.getElementById("realizadosBox");
+        const subtitle = document.getElementById("realizadosSubtitle");
+        const badge = document.getElementById("tabRealizadosBadge");
+        const pager = document.getElementById("realizadosPager");
+        const pagerInfo = document.getElementById("pagerInfo");
+        const pagerPrev = document.getElementById("pagerPrev");
+        const pagerNext = document.getElementById("pagerNext");
+        const listo = !!tableroGestor;
+        const salidas = salidasDeHoy();
+        const porSalida = listo ? anotadoPorSalida() : {};
+        const faltan = listo ? salidas.filter(function (r) { return !porSalida[r.id]; }) : [];
+        pintarAvisoFaltan(faltan);
+
+        if (badge) {
+            badge.textContent = String(faltan.length);
+            badge.classList.toggle("tab-badge-falta", faltan.length > 0);
+            badge.title = faltan.length + " sin pasajeros anotados";
+        }
+        if (subtitle) {
+            subtitle.textContent = listo
+                ? `Hoy salieron ${salidas.length} bus${salidas.length === 1 ? "" : "es"} del aeropuerto · ` +
+                  `${salidas.length - faltan.length} con pasajeros · faltan ${faltan.length}`
+                : "Cargando lo anotado por los gestores...";
+        }
+
+        const q = (realizadosSearch || "").toLowerCase().trim();
+        let visibles = realizadosFiltroActivos ? faltan : salidas;   // el filtro aquí es "Solo los que faltan"
+        if (q) {
+            visibles = visibles.filter(function (r) {
+                return realizadoMatchesSearch(r, q) || destinoDe(r).toLowerCase().includes(q) ||
+                    (porSalida[r.id] || []).some(function (g) { return String(g.vuelo || "").toLowerCase().includes(q); });
+            });
+        }
+        if (!visibles.length) {
+            const txt = q ? "No hay resultados para su búsqueda"
+                : !listo ? "Cargando..."
+                : realizadosFiltroActivos ? "No falta ningún bus: todos tienen pasajeros anotados"
+                : "Hoy no ha salido ningún bus del aeropuerto";
+            box.innerHTML = `<div class="loading">${escapeHtml(txt)}</div>`;
+            if (pager) pager.hidden = true;
+            return;
+        }
+
+        const totalPaginas = Math.max(1, Math.ceil(visibles.length / REALIZADOS_PAGE_SIZE));
+        if (realizadosPage > totalPaginas) realizadosPage = totalPaginas;
+        if (realizadosPage < 1) realizadosPage = 1;
+        const inicio = (realizadosPage - 1) * REALIZADOS_PAGE_SIZE;
+        const paginaItems = visibles.slice(inicio, inicio + REALIZADOS_PAGE_SIZE);
+        if (pager) {
+            pager.hidden = totalPaginas <= 1;
+            if (pagerInfo) pagerInfo.textContent = `Página ${realizadosPage} de ${totalPaginas} · ${visibles.length} salidas`;
+            if (pagerPrev) pagerPrev.disabled = realizadosPage <= 1;
+            if (pagerNext) pagerNext.disabled = realizadosPage >= totalPaginas;
+        }
+
+        const filas = paginaItems.map(function (r) {
+            const regs = porSalida[r.id] || [];
+            const total = sumaPasajeros(regs);
+            const porVuelo = {};
+            regs.forEach(function (g) { porVuelo[g.vuelo] = (porVuelo[g.vuelo] || 0) + (Number(g.pasajeros) || 0); });
+            const detalle = Object.keys(porVuelo).map(function (v) {
+                return `<span class="pg-vuelo">${escapeHtml(v)} <b>${porVuelo[v]}</b></span>`;
+            }).join("");
+            const celda = !listo ? '<span class="muted">…</span>'
+                : total ? `<span class="pg-ok"><b>${total}</b> de ${CUPO_BUS}</span>${detalle}`
+                : '<span class="pg-falta">Faltan pasajeros</span>';
+            const cupo = CUPO_BUS - total;
+            const boton = !listo ? ""
+                : cupo > 0 ? `<button type="button" class="btn-colocar${total ? " btn-colocar-mas" : ""}" data-colocar="${escapeHtml(r.id)}">${total ? "Agregar" : "Colocar"}</button>`
+                : '<span class="muted pg-lleno">Lleno</span>';
+            return `
+                <tr class="${listo && !total ? "pg-fila-falta" : ""}">
+                    <td class="hora">${escapeHtml(horaCorta(r.created_at))}</td>
+                    <td class="hace">${escapeHtml(humanizeAge(r.created_at))}</td>
+                    <td class="interno">${escapeHtml(r.interno || "")}</td>
+                    <td class="pg-destino">${escapeHtml(destinoDe(r))}</td>
+                    <td class="pg-celda">${celda}</td>
+                    <td class="pg-accion">${boton}</td>
+                </tr>
+            `;
+        }).join("");
+        box.innerHTML = `
+            <table class="arrivals pg-tabla">
+                <thead>
+                    <tr><th>Salió</th><th>Hace</th><th>Bus</th><th>Va a</th><th>Pasajeros</th><th></th></tr>
+                </thead>
+                <tbody>${filas}</tbody>
+            </table>
+        `;
+        box.querySelectorAll("[data-colocar]").forEach(function (b) {
+            b.addEventListener("click", function () { abrirColocar(b.getAttribute("data-colocar")); });
+        });
+    }
+
+    function pintarAvisoFaltan(faltan) {
+        const aviso = document.getElementById("avisoFaltan");
+        if (!aviso) return;
+        const desde = Date.now() - AVISO_FALTAN_MS;
+        const recientes = (faltan || []).filter(function (r) { return new Date(r.created_at).getTime() >= desde; });
+        aviso.hidden = !recientes.length;
+        if (!recientes.length) return;
+        const lista = recientes.slice(0, 4).map(function (r) {
+            return `<span class="af-bus"><b>${escapeHtml(r.interno || "")}</b> ${escapeHtml(horaCorta(r.created_at))}</span>`;
+        }).join(" ") + (recientes.length > 4 ? ` <span class="af-mas">y ${recientes.length - 4} más</span>` : "");
+        aviso.querySelector(".af-txt").innerHTML =
+            `<strong>Faltan pasajeros por colocar:</strong> ` +
+            `${recientes.length === 1 ? "1 bus salió" : recientes.length + " buses salieron"} del aeropuerto sin anotar ` +
+            `en las últimas 2 horas. ${lista}`;
+    }
+
+    // ---- La ventana "Colocar pasajeros" ----
+    function vueloLlega(v) {
+        const t = new Date(v.llega).getTime();
+        return isNaN(t) ? null : t;
+    }
+
+    function totalDelVuelo(v) {
+        const regs = (tableroGestor && tableroGestor.registros) || [];
+        return sumaPasajeros(regs.filter(function (g) {
+            return String(g.fecha).slice(0, 10) === String(v.fecha).slice(0, 10) &&
+                String(g.vuelo).toUpperCase() === String(v.vuelo).toUpperCase();
+        }));
+    }
+
+    function mismoVuelo(a, b) {
+        return a && b && String(a.fecha).slice(0, 10) === String(b.fecha).slice(0, 10) &&
+            String(a.vuelo).toUpperCase() === String(b.vuelo).toUpperCase();
+    }
+
+    function abrirColocar(id) {
+        const r = realizados.find(function (x) { return x.id === id; });
+        if (!r || !tableroGestor) return;
+        pasSalida = r;
+        pasVuelo = null;
+        document.getElementById("pasBuscar").value = "";
+        document.getElementById("pasNum").value = "1";
+        document.getElementById("pasError").hidden = true;
+        pintarColocar();
+        document.getElementById("pasModal").hidden = false;
+    }
+
+    function cerrarColocar() {
+        document.getElementById("pasModal").hidden = true;
+        pasSalida = null;
+        pasVuelo = null;
+    }
+
+    function pintarColocar() {
+        const r = pasSalida;
+        if (!r || !tableroGestor) return;
+        const s = new Date(r.created_at).getTime();
+        const regs = anotadoPorSalida()[r.id] || [];
+        const total = sumaPasajeros(regs);
+        const cupo = Math.max(0, CUPO_BUS - total);
+
+        document.getElementById("pasBus").innerHTML =
+            `Bus <b>${escapeHtml(r.interno || "")}</b> · salió a las ${escapeHtml(horaCorta(r.created_at))}` +
+            (destinoDe(r) ? ` a <b>${escapeHtml(destinoDe(r))}</b>` : "");
+        document.getElementById("pasYa").innerHTML = regs.length
+            ? `<div class="pas-ya-tit">Ya lleva <b>${total}</b> de ${CUPO_BUS}</div>` + regs.map(function (g) {
+                return `<div class="pas-ya-fila"><span><b>${escapeHtml(g.vuelo || "")}</b> · ${Number(g.pasajeros) || 0} pas.` +
+                    (g.nombre ? ` · ${escapeHtml(g.nombre)}` : "") + `</span>` +
+                    (g.se_puede_quitar && g.id_local
+                        ? `<button type="button" class="btn-quitar" data-quitar="${escapeHtml(g.id_local)}">Quitar</button>` : "") +
+                    `</div>`;
+            }).join("")
+            : '<div class="pas-ya-tit">Todavía no tiene pasajeros anotados</div>';
+
+        const q = normalizar(document.getElementById("pasBuscar").value || "");
+        const todos = (tableroGestor.vuelos || []).filter(function (v) { return vueloLlega(v) != null; });
+        let lista;
+        if (q) {
+            lista = todos.filter(function (v) { return normalizar([v.vuelo, v.aerolinea, v.ciudad].join(" ")).includes(q); });
+        } else {
+            lista = todos.filter(function (v) {
+                const t = vueloLlega(v);
+                return t >= s - VUELO_ANTES_MS && t <= s + VUELO_DESPUES_MS;
+            });
+        }
+        lista.sort(function (a, b) {
+            return Math.abs(vueloLlega(a) + SALE_TRAS_ATERRIZAR_MS - s) - Math.abs(vueloLlega(b) + SALE_TRAS_ATERRIZAR_MS - s);
+        });
+        lista = lista.slice(0, 12);
+        if (pasVuelo && !lista.some(function (v) { return mismoVuelo(v, pasVuelo); })) lista.unshift(pasVuelo);
+        pasLista = lista;
+        const box = document.getElementById("pasVuelos");
+        box.innerHTML = lista.length ? lista.map(function (v, i) {
+            const sel = mismoVuelo(v, pasVuelo);
+            const ya = totalDelVuelo(v);
+            return `<button type="button" class="pas-vuelo${sel ? " sel" : ""}" role="radio" aria-checked="${sel}" data-i="${i}">` +
+                `<span class="pas-vuelo-cod">${escapeHtml(v.vuelo || "")}</span>` +
+                `<span class="pas-vuelo-de">${escapeHtml(v.aerolinea || "")}${v.ciudad ? " · desde " + escapeHtml(v.ciudad) : ""}</span>` +
+                `<span class="pas-vuelo-hora">${escapeHtml(v.estado || "Llega")} ${escapeHtml(horaCorta(vueloLlega(v)))}` +
+                `${ya ? " · ya " + ya + " en buses" : ""}</span></button>`;
+        }).join("")
+            : `<div class="muted pas-nada">${q ? "Ningún vuelo de hoy con ese nombre." : "No hay vuelos que hayan aterrizado cerca de esa hora: búsquelo arriba."}</div>`;
+
+        const num = document.getElementById("pasNum");
+        num.max = String(Math.max(1, cupo));
+        let n = parseInt(num.value, 10);
+        if (!Number.isFinite(n) || n < 1) n = 1;
+        if (cupo && n > cupo) n = cupo;
+        num.value = String(n);
+        document.getElementById("pasCupo").textContent = cupo
+            ? `Le caben ${cupo} más (el cupo es ${CUPO_BUS})`
+            : `El bus ya está lleno (${CUPO_BUS})`;
+        document.getElementById("pasGuardar").disabled = !cupo || !pasVuelo;
+    }
+
+    function cambiarNumPasajeros(delta) {
+        const num = document.getElementById("pasNum");
+        const max = parseInt(num.max, 10) || CUPO_BUS;
+        let n = (parseInt(num.value, 10) || 0) + delta;
+        if (n < 1) n = 1;
+        if (n > max) n = max;
+        num.value = String(n);
+    }
+
+    function mensajeError(e) {
+        const m = (e && (e.message || e.msg)) || String(e);
+        return /fetch|network|Failed|Load failed/i.test(m) ? "No hubo conexión: no se guardó. Intente otra vez." : m;
+    }
+
+    async function guardarColocar() {
+        const r = pasSalida;
+        const v = pasVuelo;
+        const err = document.getElementById("pasError");
+        const btn = document.getElementById("pasGuardar");
+        err.hidden = true;
+        if (!r) return;
+        if (!v) { err.textContent = "Escoja el vuelo."; err.hidden = false; return; }
+        const n = parseInt(document.getElementById("pasNum").value, 10);
+        if (!Number.isFinite(n) || n < 1 || n > CUPO_BUS) {
+            err.textContent = "Escriba cuántos pasajeros (de 1 a " + CUPO_BUS + ").";
+            err.hidden = false;
+            return;
+        }
+        if (!navigator.onLine) {
+            err.textContent = "Sin internet: no se guardó. Intente cuando vuelva la señal.";
+            err.hidden = false;
+            return;
+        }
+        btn.disabled = true;
+        btn.textContent = "Guardando...";
+        try {
+            const { data, error } = await client.rpc(RPC_GESTOR_ANOTAR, {
+                p_id_local: "aero-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10),
+                p_dni: gestorYo.dni,
+                p_fecha: String(v.fecha).slice(0, 10),
+                p_vuelo: v.vuelo,
+                p_interno: soloNumeroBus(r.interno) || String(r.interno || ""),
+                p_pasajeros: n,
+                p_anotado_en: r.created_at,   // la hora en que salió: así cuenta para esa salida
+                p_dispositivo: "app aeropuerto gestores " + (cfg.APP_VERSION || ""),
+            });
+            if (error) throw error;
+            if (!data || !data.ok) throw new Error("No se guardó. Intente otra vez.");
+            const bus = r.interno;
+            cerrarColocar();
+            showToast("ok", `Listo: ${n} pasajero${n === 1 ? "" : "s"} del ${v.vuelo} en el bus ${bus}`);
+            await cargarTableroGestor(true);
+            if (activeTab === "vuelos") cargarVuelos();
+        } catch (e) {
+            err.textContent = mensajeError(e);
+            err.hidden = false;
+        } finally {
+            btn.textContent = "Guardar";
+            btn.disabled = !pasVuelo;
+        }
+    }
+
+    async function quitarAnotacion(idLocal) {
+        const ok = await mostrarConfirmacion({
+            titulo: "Quitar lo anotado",
+            mensaje: "Se quita lo que usted anotó en este bus. Después lo puede volver a anotar bien.",
+            textoConfirmar: "Sí, quitar",
+            textoCancelar: "No",
+            tipo: "warn",
+        });
+        if (!ok) return;
+        try {
+            const { data, error } = await client.rpc(RPC_GESTOR_QUITAR, { p_dni: gestorYo.dni, p_id_local: idLocal });
+            if (error) throw error;
+            if (!data || !data.ok) throw new Error("No se quitó. Intente otra vez.");
+            showToast("ok", "Quitado");
+            await cargarTableroGestor(true);
+            pintarColocar();
+            if (activeTab === "vuelos") cargarVuelos();
+        } catch (e) {
+            showToast("err", mensajeError(e));
+        }
+    }
+
+    function initGestor() {
+        const modal = document.getElementById("pasModal");
+        modal.querySelectorAll("[data-close]").forEach(function (b) { b.addEventListener("click", cerrarColocar); });
+        modal.addEventListener("click", function (ev) { if (ev.target === modal) cerrarColocar(); });
+        document.addEventListener("keydown", function (ev) {
+            if (ev.key === "Escape" && !modal.hidden && document.getElementById("confirmModal").hidden) cerrarColocar();
+        });
+        document.getElementById("pasBuscar").addEventListener("input", pintarColocar);
+        document.getElementById("pasMenos").addEventListener("click", function () { cambiarNumPasajeros(-1); });
+        document.getElementById("pasMas").addEventListener("click", function () { cambiarNumPasajeros(1); });
+        document.getElementById("pasGuardar").addEventListener("click", guardarColocar);
+        document.getElementById("pasVuelos").addEventListener("click", function (ev) {
+            const b = ev.target.closest ? ev.target.closest(".pas-vuelo") : null;
+            if (!b) return;
+            pasVuelo = pasLista[Number(b.getAttribute("data-i"))] || null;
+            document.getElementById("pasError").hidden = true;
+            pintarColocar();
+        });
+        document.getElementById("pasYa").addEventListener("click", function (ev) {
+            const b = ev.target.closest ? ev.target.closest("[data-quitar]") : null;
+            if (b) quitarAnotacion(b.getAttribute("data-quitar"));
+        });
+        document.getElementById("avisoFaltanVer").addEventListener("click", function () {
+            const chk = document.getElementById("filterRealizadosActivos");
+            if (chk) chk.checked = true;
+            realizadosFiltroActivos = true;
+            realizadosPage = 1;
+            setActiveTab("realizados");
+        });
+        cargarTableroGestor(true);
+        // cada minuto: lo que anotan los demás gestores
+        setInterval(function () {
+            if (navigator.onLine && !document.hidden) cargarTableroGestor(true);
+        }, 60000);
+        document.addEventListener("visibilitychange", function () {
+            if (!document.hidden && navigator.onLine) {
+                cargarTableroGestor(true);
+                cargarRealizados();
+            }
+        });
+    }
+
+    // ---- Instalar en el celular (v1.30.0) ----
+    // Android/Chrome avisa que se puede instalar (beforeinstallprompt): se guarda ese aviso y se lanza con el botón.
+    // En el iPhone el navegador no lo ofrece: el botón explica cómo. En Android, si en 4 s no llegó el aviso (por ejemplo,
+    // abierta desde WhatsApp), también. Ya instalada, no sale. "Ahora no" lo calla 3 días.
+    let avisoInstalar = null;
+    const LS_INSTALAR_NO = "aero_gestor_instalar_no";
+
+    function enModoApp() {
+        return (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches) || window.navigator.standalone === true;
+    }
+    function esIphone() {
+        return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    }
+    function esAndroid() {
+        return /android/i.test(navigator.userAgent);
+    }
+
+    function initInstalar() {
+        const banner = document.getElementById("instalarBanner");
+        const ayuda = document.getElementById("instalarAyuda");
+        const btn = document.getElementById("btnInstalar");
+        if (!banner || !ayuda || !btn) return;
+        let noHasta = 0;
+        try { noHasta = Number(localStorage.getItem(LS_INSTALAR_NO) || 0); } catch (_) {}
+        function mostrar(texto) {
+            btn.textContent = texto;
+            if (!enModoApp() && Date.now() > noHasta) banner.hidden = false;
+        }
+        function abrirAyuda() {
+            document.getElementById("iaIphone").hidden = esAndroid();
+            document.getElementById("iaAndroid").hidden = esIphone();
+            ayuda.hidden = false;
+        }
+        window.addEventListener("beforeinstallprompt", function (ev) {
+            ev.preventDefault();
+            avisoInstalar = ev;
+            mostrar("Instalar");
+        });
+        window.addEventListener("appinstalled", function () {
+            banner.hidden = true;
+            avisoInstalar = null;
+        });
+        if (esIphone()) {
+            mostrar("Ver cómo");
+        } else if (esAndroid()) {
+            setTimeout(function () { if (!avisoInstalar) mostrar("Ver cómo"); }, 4000);
+        }
+        btn.addEventListener("click", function () {
+            if (avisoInstalar) {
+                const ev = avisoInstalar;
+                avisoInstalar = null;
+                ev.prompt();
+                Promise.resolve(ev.userChoice).then(function (c) {
+                    if (c && c.outcome === "accepted") banner.hidden = true;
+                    else mostrar("Ver cómo");
+                }).catch(function () {});
+            } else {
+                abrirAyuda();
+            }
+        });
+        document.getElementById("instalarCerrar").addEventListener("click", function () {
+            banner.hidden = true;
+            try { localStorage.setItem(LS_INSTALAR_NO, String(Date.now() + 3 * 24 * 60 * 60 * 1000)); } catch (_) {}
+        });
+        ayuda.querySelectorAll("[data-close]").forEach(function (b) {
+            b.addEventListener("click", function () { ayuda.hidden = true; });
+        });
+        ayuda.addEventListener("click", function (ev) { if (ev.target === ayuda) ayuda.hidden = true; });
+    }
+
+    // ---- Entrar con la cédula ----
+    function initAuthGestor() {
+        initInstalar();
+        const form = document.getElementById("loginForm");
+        const errorBox = document.getElementById("loginError");
+        const submitBtn = document.getElementById("loginSubmit");
+        const btnLogout = document.getElementById("btnLogout");
+
+        form.addEventListener("submit", async function (ev) {
+            ev.preventDefault();
+            errorBox.hidden = true;
+            const dni = String(document.getElementById("loginCedula").value || "").replace(/\D/g, "");
+            if (dni.length < 5) {
+                errorBox.textContent = "Escriba su cédula, solo los números.";
+                errorBox.hidden = false;
+                return;
+            }
+            submitBtn.disabled = true;
+            submitBtn.textContent = "Entrando...";
+            try {
+                const { data, error } = await client.rpc(RPC_GESTOR_DATOS, { p_dni: dni, p_que: "yo" });
+                if (error) throw error;
+                if (data && data.no_es) throw new Error("Esa cédula no aparece activa en la empresa. Revise el número.");
+                if (data && data.no_gestor) {
+                    throw new Error("Esta app es solo para los gestores. Si usted es gestor y no lo deja entrar, avísele a control.");
+                }
+                if (!data || !data.ok) throw new Error("No se pudo entrar. Intente otra vez.");
+                gestorYo = { dni: dni, nombre: data.nombre || "", cargo: data.cargo || "" };
+                try { localStorage.setItem(LS_GESTOR, JSON.stringify(gestorYo)); } catch (_) {}
+                entrarGestor();
+            } catch (err) {
+                errorBox.textContent = mensajeError(err);
+                errorBox.hidden = false;
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = "Entrar";
+            }
+        });
+
+        btnLogout.addEventListener("click", async function () {
+            const ok = await mostrarConfirmacion({
+                titulo: "Salir",
+                mensaje: "La app vuelve a pedir la cédula. Lo que ya anotó queda guardado.",
+                textoConfirmar: "Salir",
+                textoCancelar: "Seguir",
+                tipo: "warn",
+            });
+            if (ok) sacarGestor("");
+        });
+
+        let guardado = null;
+        try { guardado = JSON.parse(localStorage.getItem(LS_GESTOR) || "null"); } catch (_) {}
+        if (guardado && guardado.dni) {
+            gestorYo = guardado;
+            entrarGestor();
+        } else {
+            document.getElementById("loginScreen").hidden = false;
+            let motivo = "";
+            try { motivo = sessionStorage.getItem(LS_MOTIVO_SALIDA) || ""; sessionStorage.removeItem(LS_MOTIVO_SALIDA); } catch (_) {}
+            if (motivo) { errorBox.textContent = motivo; errorBox.hidden = false; }
+        }
+    }
+
+    function entrarGestor() {
+        document.getElementById("loginScreen").hidden = true;
+        const btnLogout = document.getElementById("btnLogout");
+        btnLogout.hidden = false;
+        btnLogout.title = "Salir" + (gestorYo.nombre ? " (" + gestorYo.nombre + ")" : "");
+        const sub = document.querySelector(".topbar .subtitle");
+        if (sub) sub.textContent = "Gestores" + (gestorYo.nombre ? " · Hola, " + gestorYo.nombre : "");
+        if (!appStarted) startApp();
+    }
+
+    // Olvida la cédula y vuelve a empezar (así se detiene todo: mapa, tiempos y lo que llega en vivo).
+    function sacarGestor(motivo) {
+        try { localStorage.removeItem(LS_GESTOR); } catch (_) {}
+        try { if (motivo) sessionStorage.setItem(LS_MOTIVO_SALIDA, motivo); } catch (_) {}
+        gestorYo = null;
+        location.reload();
+    }
+
     // ============== AUTH ==============
     function initAuth() {
+        if (GESTOR) { initAuthGestor(); return; } // v1.30.0: con la cédula
         const form = document.getElementById("loginForm");
         const errorBox = document.getElementById("loginError");
         const submitBtn = document.getElementById("loginSubmit");
@@ -3342,9 +4010,13 @@
         initTabs();
         initMap();
         initMapaControles();
-        initModal();
-        initManualModal();
-        initDespachosControles();
+        if (GESTOR) {
+            initGestor(); // v1.30.0: sin despachar; colocar pasajeros
+        } else {
+            initModal();
+            initManualModal();
+            initDespachosControles();
+        }
         initRealizadosControles();
         initVuelosControles();
         initTurnosControles();
@@ -3360,7 +4032,7 @@
             cargarDireccionVehiculos();
             cargarPuntos();
             cargarInternosFlota();
-            cargarTurnos();
+            if (!GESTOR) cargarTurnos(); // v1.30.0: el gestor no tiene la pestaña Turnos
         } else {
             setConnection("offline");
         }

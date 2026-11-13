@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f766e">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Gestores JMC">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="format-detection" content="telephone=no">
+    <title>Aeropuerto JMC · Gestores - Combuses</title>
+    <link rel="manifest" href="manifest-gestores.webmanifest">
+    <link rel="icon" type="image/svg+xml" href="icons/gestores.svg">
+    <link rel="apple-touch-icon" href="icons/gestores-apple-180.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cbplebkmxrkaafqdhiyi.supabase.co">
+    <link rel="preconnect" href="https://unpkg.com" crossorigin>
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link rel="dns-prefetch" href="https://docs.google.com">
+    <link rel="dns-prefetch" href="https://tile.openstreetmap.org">
+
+    <!-- Preload de recursos críticos para arrancar la descarga en paralelo -->
+    <link rel="preload" href="css/style.css" as="style">
+    <link rel="preload" href="js/config.js" as="script">
+    <link rel="preload" href="js/main.js" as="script">
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@500;600;700;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+        integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+    <link rel="stylesheet" href="css/style.css">
+    <!-- Ajustes para pantalla chica. Va aparte para no tocar style.css;
+         quitando esta línea queda todo como estaba. -->
+    <link rel="stylesheet" href="css/pantalla-chica.css">
+    <link rel="stylesheet" href="css/mapa-enturnes.css">
+    <link rel="stylesheet" href="css/sin-conductor.css">
+<link rel="stylesheet" href="css/ya-en-la-lista.css">
+<link rel="stylesheet" href="css/vuelos-pasajeros.css">
+<link rel="stylesheet" href="css/gestores.css">
+
+    <!-- CSS crítico inline: pinta el splash mientras el resto del CSS llega -->
+    <style>
+        html, body { margin: 0; background: #f8f9fb; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; -webkit-font-smoothing: antialiased; }
+        #appSplash { position: fixed; inset: 0; z-index: 99999; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: #f8f9fb; }
+        #appSplash .spinner { width: 36px; height: 36px; border: 3px solid #e5e7eb; border-top-color: #4f46e5; border-radius: 50%; animation: splash-spin 0.8s linear infinite; }
+        #appSplash .lbl { color: #6b7280; font-size: 13px; font-weight: 500; letter-spacing: 0.02em; }
+        @keyframes splash-spin { to { transform: rotate(360deg); } }
+        body.app-ready #appSplash { opacity: 0; pointer-events: none; transition: opacity 0.18s ease; }
+    </style>
+</head>
+<body class="modo-gestor">
+    <!-- v1.30.0: versión de los GESTORES. Se hizo a partir de aplicacion-aeropuerto.html: entran con la cédula,
+         no despachan, y en Realizados colocan los pasajeros de cada vuelo en el bus en que se fueron. -->
+    <!-- Splash inicial: visible hasta que main.js marca body.app-ready -->
+    <div id="appSplash" aria-hidden="true">
+        <div class="spinner"></div>
+        <div class="lbl">Cargando...</div>
+    </div>
+
+    <!-- Pantalla de login (se oculta cuando hay sesión) -->
+    <div id="loginScreen" class="login-screen" hidden>
+        <div class="login-card">
+            <div class="login-logo" aria-hidden="true">
+                <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
+                    <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill="#4f46e5"/>
+                </svg>
+            </div>
+            <h1 class="login-title">Aeropuerto JMC · Gestores</h1>
+            <p class="login-subtitle">Para los gestores del aeropuerto: entre con su cédula</p>
+            <form id="loginForm" class="login-form">
+                <div class="form-row">
+                    <label for="loginCedula">Cédula</label>
+                    <input id="loginCedula" type="text" inputmode="numeric" autocomplete="off" required placeholder="Solo los números">
+                </div>
+                <div id="loginError" class="form-error" hidden></div>
+                <button id="loginSubmit" type="submit" class="btn btn-primary login-submit">Entrar</button>
+            </form>
+        </div>
+    </div>
+
+    <header class="topbar">
+        <div class="topbar-left">
+            <div class="logo" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/>
+                </svg>
+            </div>
+            <div class="topbar-titles">
+                <h1>Aeropuerto JMC · Gestores</h1>
+                <div class="subtitle">Gestores</div>
+            </div>
+        </div>
+        <div class="topbar-right">
+            <span id="connection" class="badge badge-warn">Conectando...</span>
+            <div class="last-update">
+                <span class="muted">Actualizado</span>
+                <span id="lastUpdate">—</span>
+            </div>
+            <button id="btnLogout" class="btn-icon" type="button" title="Cerrar sesión" hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M16 17l5-5m0 0l-5-5m5 5H9M13 21H5a2 2 0 01-2-2V5a2 2 0 012-2h8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <nav class="tabs" role="tablist" aria-label="Vistas">
+        <!-- Para los gestores solo Mapa, Listas y Realizados (pedido del 12-nov-2026: "entre más liviana mejor").
+             Vuelos, Subida y Turnos van ocultas: para mostrarlas, quitar "hidden". -->
+        <button class="tab active" data-tab="mapa" role="tab" aria-selected="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5a2.5 2.5 0 0 1 0-5 2.5 2.5 0 0 1 0 5z" fill="currentColor"/>
+            </svg>
+            <span>Mapa</span>
+        </button>
+        <button class="tab" data-tab="listas" role="tab" aria-selected="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M3 13h2v-2H3v2zm0 4h2v-2H3v2zm0-8h2V7H3v2zm4 4h14v-2H7v2zm0 4h14v-2H7v2zM7 7v2h14V7H7z" fill="currentColor"/>
+            </svg>
+            <span>Listas</span>
+            <span id="tabListasBadge" class="tab-badge">0</span>
+        </button>
+        <button class="tab" data-tab="realizados" role="tab" aria-selected="false">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M9 11l3 3L22 4" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Realizados</span>
+            <span id="tabRealizadosBadge" class="tab-badge">0</span>
+        </button>
+        <button class="tab" data-tab="vuelos" role="tab" aria-selected="false" hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z" fill="currentColor"/>
+            </svg>
+            <span>Vuelos</span>
+            <span id="tabVuelosBadge" class="tab-badge">0</span>
+        </button>
+        <button class="tab" data-tab="subida" role="tab" aria-selected="false" hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" fill="currentColor"/>
+                <path d="M2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Subida</span>
+            <span id="tabSubidaBadge" class="tab-badge">0</span>
+        </button>
+        <button class="tab" data-tab="turnos" role="tab" aria-selected="false" hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2"/>
+                <path d="M12 7v5l3.5 2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Turnos</span>
+            <span id="tabTurnosBadge" class="tab-badge">0</span>
+        </button>
+    </nav>
+
+    <!-- v1.30.0: buses que salieron del aeropuerto en las últimas 2 horas sin pasajeros anotados -->
+    <div id="avisoFaltan" class="aviso-faltan" role="status" hidden>
+        <span class="af-txt"></span>
+        <button type="button" id="avisoFaltanVer" class="btn btn-small af-btn">Colocar pasajeros</button>
+    </div>
+
+    <main class="main">
+        <section id="paneMapa" class="pane active" role="tabpanel">
+            <div class="map-overlay-top">
+                <div class="map-overlay-row">
+                    <div class="map-floating-stats">
+                        <div class="mini-stat"><span id="miniTotal" class="mini-num">0</span><span class="mini-lbl">En fila</span></div>
+                        <div class="mini-stat mini-stat--filtro" data-filtro="patio_azul" role="button" tabindex="0"><span id="miniPatioAzul" class="mini-num">…</span><span class="mini-lbl">Patio azul</span></div>
+                        <div class="mini-stat mini-stat--filtro" data-filtro="subiendo" role="button" tabindex="0"><span id="miniSubiendo" class="mini-num">…</span><span class="mini-lbl">↑ Subiendo</span></div>
+                        <div class="mini-stat mini-stat--filtro" data-filtro="bajando" role="button" tabindex="0"><span id="miniBajando" class="mini-num">…</span><span class="mini-lbl">↓ Bajando</span></div>
+                    </div>
+                    <div class="map-search-panel">
+                        <input type="search" id="mapaBuscarBus" class="map-search-input" placeholder="Buscar bus (interno, placa)..." autocomplete="off">
+                        <select id="mapaFiltroEstado" class="map-filter-select">
+                            <option value="todos">Todos</option>
+                            <option value="andando">Andando</option>
+                            <option value="detenido">Detenido</option>
+                        </select>
+                    </div>
+                </div>
+                <!-- Un tablero por cada punto de Medellín (Almacentro, Exposiciones, Nutibara,
+                     Terminal Norte), con la cuenta del programa. Los arma main.js. -->
+                <div id="miniPuntos" class="map-floating-stats map-floating-puntos"></div>
+            </div>
+            <div id="map"></div>
+        </section>
+
+        <section id="paneSubida" class="pane" role="tabpanel">
+            <div class="despachos-head">
+                <div class="despachos-titles">
+                    <h2>Listas de subida</h2>
+                    <div id="subidaSubtitle" class="despachos-subtitle">Cargando...</div>
+                </div>
+            </div>
+            <div data-resumen-nota class="despachos-subtitle"></div>
+            <div data-resumen-box class="resumen-direcciones"></div>
+            <div id="subidaBox" class="tabla-box">
+                <div class="loading">Cargando listas de subida...</div>
+            </div>
+        </section>
+
+        <section id="paneTurnos" class="pane" role="tabpanel">
+            <div class="despachos-head">
+                <div class="despachos-titles">
+                    <h2>Programación de turnos</h2>
+                    <div id="turnosSubtitle" class="despachos-subtitle">Cargando...</div>
+                </div>
+                <div class="despachos-actions">
+                    <button id="btnRefreshTurnos" class="btn btn-ghost btn-small" type="button">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                            <path d="M4 4v6h6M20 20v-6h-6M20 8a8 8 0 10-2 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Refrescar
+                    </button>
+                </div>
+            </div>
+            <div id="turnosBox" class="tabla-box despachos-box">
+                <div class="loading">Cargando turnos...</div>
+            </div>
+        </section>
+
+        <section id="paneRealizados" class="pane" role="tabpanel">
+            <div class="despachos-head">
+                <div class="despachos-titles">
+                    <h2>Salidas del aeropuerto</h2>
+                    <div id="realizadosSubtitle" class="despachos-subtitle">Cargando...</div>
+                </div>
+                <div class="despachos-actions">
+                    <input type="search" id="searchRealizados" class="search-input"
+                        placeholder="Buscar bus, vuelo o destino..." autocomplete="off">
+                    <label class="filter-toggle">
+                        <input type="checkbox" id="filterRealizadosActivos">
+                        <span>Solo los que faltan</span>
+                    </label>
+                </div>
+            </div>
+            <div id="realizadosBox" class="tabla-box despachos-box">
+                <div class="loading">Cargando las salidas...</div>
+            </div>
+            <div id="realizadosPager" class="pager" hidden>
+                <button type="button" id="pagerPrev" class="pager-btn">&laquo; Anterior</button>
+                <span id="pagerInfo" class="pager-info">Página 1 de 1</span>
+                <button type="button" id="pagerNext" class="pager-btn">Siguiente &raquo;</button>
+            </div>
+        </section>
+
+
+        <section id="paneVuelos" class="pane" role="tabpanel">
+            <div class="despachos-head">
+                <div class="despachos-titles">
+                    <h2>Vuelos de llegada</h2>
+                    <div id="vuelosSubtitle" class="despachos-subtitle">Cargando...</div>
+                </div>
+                <div class="despachos-actions">
+                    <button id="btnRefreshVuelos" class="btn btn-ghost btn-small" type="button">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+                            <path d="M4 4v6h6M20 20v-6h-6M20 8a8 8 0 10-2 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        Refrescar
+                    </button>
+                </div>
+            </div>
+            <div id="vuelosBox" class="tabla-box despachos-box">
+                <div class="loading">Cargando vuelos...</div>
+            </div>
+        </section>
+
+        <section id="paneListas" class="pane" role="tabpanel">
+            <div class="turno-section">
+                <h2 class="turno-heading">Línea de turno</h2>
+                <div class="turno-line-wrap">
+                    <div class="turno-line" id="turnoLine"></div>
+                </div>
+            </div>
+
+            <div class="stats">
+                <div class="stat">
+                    <span id="statTotal" class="stat-num">0</span>
+                    <span class="stat-lbl">Esperando turno</span>
+                </div>
+            </div>
+
+            <div id="chips" class="chips"></div>
+
+            <div id="tablaBox" class="tabla-box">
+                <div class="loading">Cargando llegadas...</div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="foot">
+        <span>Turno FIFO corroborado con GPS · el mapa muestra la flota completa en vivo</span>
+        <span id="appVersion" class="app-version">—</span>
+    </footer>
+
+    <!-- v1.30.0: Colocar pasajeros (solo en la versión de los gestores) -->
+    <div id="pasModal" class="modal-backdrop" hidden>
+        <div class="modal pas-modal" role="dialog" aria-modal="true" aria-labelledby="pasTitle">
+            <div class="modal-head">
+                <h2 id="pasTitle">Colocar pasajeros</h2>
+                <button class="modal-close" type="button" aria-label="Cerrar" data-close>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div id="pasBus" class="pas-bus"></div>
+                <div id="pasYa" class="pas-ya"></div>
+                <div class="form-row">
+                    <label for="pasBuscar">¿De qué vuelo?</label>
+                    <input id="pasBuscar" type="search" class="search-input" autocomplete="off"
+                        placeholder="Buscar otro vuelo, aerolínea o ciudad">
+                </div>
+                <div id="pasVuelos" class="pas-vuelos" role="radiogroup" aria-label="Vuelos"></div>
+                <div class="form-row">
+                    <label for="pasNum">¿Cuántos pasajeros se fueron en este bus?</label>
+                    <div class="pas-contador">
+                        <button type="button" id="pasMenos" class="pas-btn" aria-label="Uno menos">−</button>
+                        <input id="pasNum" type="number" min="1" max="19" value="1" inputmode="numeric">
+                        <button type="button" id="pasMas" class="pas-btn" aria-label="Uno más">+</button>
+                    </div>
+                    <div id="pasCupo" class="pas-cupo"></div>
+                </div>
+                <div id="pasError" class="form-error" hidden></div>
+            </div>
+            <div class="modal-foot">
+                <button type="button" class="btn btn-ghost" data-close>Cancelar</button>
+                <button type="button" id="pasGuardar" class="btn btn-primary" disabled>Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal genérico de confirmación -->
+    <div id="confirmModal" class="modal-backdrop" hidden>
+        <div class="modal modal-confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+            <div class="modal-body confirm-body">
+                <div id="confirmIcon" class="confirm-icon confirm-icon-warn">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                        <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
+                            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                <h2 id="confirmTitle" class="confirm-title">¿Confirmar acción?</h2>
+                <p id="confirmMessage" class="confirm-message">Esta acción se realizará a continuación.</p>
+                <div id="confirmDetail" class="confirm-detail" hidden></div>
+            </div>
+            <div class="modal-foot confirm-foot">
+                <button type="button" id="confirmCancel" class="btn btn-ghost">Cancelar</button>
+                <button type="button" id="confirmAccept" class="btn btn-primary">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- v1.30.0: instalar en el celular -->
+    <div id="instalarBanner" class="instalar-banner" role="region" aria-label="Instalar la app" hidden>
+        <img src="icons/gestores-192.png" alt="" width="40" height="40">
+        <div class="ib-txt">
+            <strong>Instálela en el celular</strong>
+            <span>Queda como un ícono y abre más rápido.</span>
+        </div>
+        <button type="button" id="btnInstalar" class="btn btn-primary btn-small">Instalar</button>
+        <button type="button" id="instalarCerrar" class="ib-cerrar" aria-label="Ahora no">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+        </button>
+    </div>
+    <div id="instalarAyuda" class="modal-backdrop instalar-ayuda" hidden>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="instalarAyudaTit">
+            <div class="modal-head">
+                <h2 id="instalarAyudaTit">Cómo instalarla</h2>
+                <button class="modal-close" type="button" aria-label="Cerrar" data-close>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+                        <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body ia-cuerpo">
+                <section id="iaIphone">
+                    <h3>En iPhone (Safari)</h3>
+                    <ol>
+                        <li>Abajo, toque <b>Compartir</b> (el cuadrito con una flecha hacia arriba).</li>
+                        <li>Baje y toque <b>Agregar a inicio</b>.</li>
+                        <li>Toque <b>Agregar</b>. Queda el ícono verde <b>Gestores JMC</b>.</li>
+                    </ol>
+                    <p class="ia-nota">Si la abrió desde WhatsApp, primero ábrala en Safari.</p>
+                </section>
+                <section id="iaAndroid">
+                    <h3>En Android (Chrome)</h3>
+                    <ol>
+                        <li>Arriba a la derecha, toque los <b>tres puntos</b> (⋮).</li>
+                        <li>Toque <b>Instalar aplicación</b> o <b>Agregar a la pantalla principal</b>.</li>
+                        <li>Toque <b>Instalar</b>. Queda el ícono verde <b>Gestores JMC</b>.</li>
+                    </ol>
+                    <p class="ia-nota">Si la abrió desde WhatsApp, toque los tres puntos y <b>Abrir en Chrome</b>.</p>
+                </section>
+                <p class="ia-nota">La cédula se pide una sola vez en el celular.</p>
+            </div>
+            <div class="modal-foot">
+                <button type="button" class="btn btn-primary" data-close>Entendido</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast de resultado -->
+    <div id="toast" class="toast" hidden></div>
+
+    <script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script>window.MODO_GESTOR = true;</script>
+    <script defer src="js/config.js"></script>
+    <script defer src="js/main.js"></script>
+</body>
+</html>
