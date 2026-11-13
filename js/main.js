@@ -3407,6 +3407,13 @@
         return DESTINO_BAJADA[String(r.itinerario_id || "")] || r.itinerario || "";
     }
 
+    // v1.31.1: el itinerario con el nombre que ve el despachador (el de config.js) y su número de Sonar
+    function itinerarioDe(r) {
+        const id = String(r.itinerario_id || "");
+        const it = (cfg.ITINERARIOS || []).find(function (i) { return i.id === id; });
+        return { id: id, nombre: (it && it.nombre) || r.itinerario || id };
+    }
+
     // Las salidas del aeropuerto de hoy (no canceladas de verdad), la más nueva primero.
     function salidasDeHoy() {
         const desde = inicioDiaOperativo();
@@ -3452,6 +3459,7 @@
         if (q) {
             visibles = visibles.filter(function (r) {
                 return realizadoMatchesSearch(r, q) || destinoDe(r).toLowerCase().includes(q) ||
+                    itinerarioDe(r).nombre.toLowerCase().includes(q) ||
                     String(r.gestor || "").toLowerCase().includes(q);
             });
         }
@@ -3481,6 +3489,8 @@
             const puesto = pasajerosPuestos(r);
             const n = Number(r.pasajeros) || 0;
             const quien = r.gestor ? `<span class="pg-quien">${escapeHtml(r.gestor)}</span>` : "";
+            const itin = itinerarioDe(r);
+            const dest = destinoDe(r);
             const celda = !puesto ? '<span class="pg-falta">Faltan pasajeros</span>'
                 : n ? `<span class="pg-ok"><b>${n}</b> pasajero${n === 1 ? "" : "s"}</span>${quien}`
                 : `<span class="pg-ok pg-vacio">Salió vacío</span>${quien}`;
@@ -3488,8 +3498,8 @@
                 <tr class="${puesto ? "" : "pg-fila-falta"}">
                     <td class="hora">${escapeHtml(horaCorta(r.created_at))}</td>
                     <td class="hace">${escapeHtml(humanizeAge(r.created_at))}</td>
-                    <td class="interno">${escapeHtml(r.interno || "")}</td>
-                    <td class="pg-destino">${escapeHtml(destinoDe(r))}</td>
+                    <td class="interno">${escapeHtml(r.interno || "")}<span class="pg-itin-movil">${escapeHtml(itin.nombre)}</span></td>
+                    <td class="pg-itin"><span class="pg-itin-nombre">${escapeHtml(itin.nombre)}</span><span class="pg-itin-sub">${escapeHtml(itin.id)}${dest ? " · va a " + escapeHtml(dest) : ""}</span></td>
                     <td class="pg-celda">${celda}</td>
                     <td class="pg-accion"><button type="button" class="btn-colocar${puesto ? " btn-colocar-mas" : ""}" data-colocar="${escapeHtml(r.id)}">${puesto ? "Cambiar" : "Colocar"}</button></td>
                 </tr>
@@ -3498,7 +3508,7 @@
         box.innerHTML = `
             <table class="arrivals pg-tabla">
                 <thead>
-                    <tr><th>Salió</th><th>Hace</th><th>Bus</th><th>Va a</th><th>Pasajeros</th><th></th></tr>
+                    <tr><th>Salió</th><th>Hace</th><th>Bus</th><th>Itinerario</th><th>Pasajeros</th><th></th></tr>
                 </thead>
                 <tbody>${filas}</tbody>
             </table>
@@ -3547,7 +3557,8 @@
         if (!r) return;
         document.getElementById("pasBus").innerHTML =
             `Bus <b>${escapeHtml(r.interno || "")}</b> · salió a las ${escapeHtml(horaCorta(r.created_at))}` +
-            (destinoDe(r) ? ` a <b>${escapeHtml(destinoDe(r))}</b>` : "");
+            (destinoDe(r) ? ` a <b>${escapeHtml(destinoDe(r))}</b>` : "") +
+            `<span class="pas-itin">Itinerario ${escapeHtml(itinerarioDe(r).id)} · ${escapeHtml(itinerarioDe(r).nombre)}</span>`;
         const n = Number(r.pasajeros) || 0;
         document.getElementById("pasYa").innerHTML = pasajerosPuestos(r)
             ? `Ya tiene <b>${n ? n + " pasajero" + (n === 1 ? "" : "s") : "0 (salió vacío)"}</b>` +

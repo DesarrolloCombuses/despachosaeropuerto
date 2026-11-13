@@ -119,6 +119,28 @@ table.pg-tabla td.pg-celda {
     font-size: 11.5px;
     white-space: nowrap;
 }
+/* v1.31.1: el itinerario (nombre arriba; número y a dónde va, abajo) */
+.pg-itin-nombre {
+    display: block;
+    font-weight: 600;
+    color: var(--text);
+}
+.pg-itin-sub {
+    display: block;
+    margin-top: 1px;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.pg-itin-movil {
+    display: none;
+}
+.pas-itin {
+    display: block;
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
 .pg-vacio {
     color: var(--text-secondary);
     font-weight: 700;
@@ -180,6 +202,18 @@ table.pg-tabla td.pg-celda {
     }
     table.pg-tabla td.pg-celda {
         min-width: 0;
+    }
+    /* en el celular la columna del itinerario no cabe: va debajo del número del bus */
+    table.pg-tabla td.interno .pg-itin-movil {
+        display: block;
+        max-width: 130px;
+        margin-top: 2px;
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 1.25;
+        color: var(--text-muted);
+        white-space: normal;
+        overflow-wrap: anywhere;
     }
 }
 @media (max-width: 380px) {
