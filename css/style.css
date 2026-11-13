@@ -292,6 +292,11 @@ button {
     white-space: nowrap;
 }
 
+/* v1.29.1: una pestaña oculta no se ve aunque .tab tenga display */
+.tab[hidden] {
+    display: none !important;
+}
+
 .tab:hover {
     color: var(--text);
 }

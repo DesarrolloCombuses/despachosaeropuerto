@@ -196,6 +196,9 @@
     }
 
     function setActiveTab(name) {
+        // v1.29.1: una pestaña oculta (Despachos) no se abre: se va al Mapa
+        const boton = document.querySelector('.tab[data-tab="' + name + '"]');
+        if (!boton || boton.hidden) name = "mapa";
         activeTab = name;
         document.querySelectorAll(".tab").forEach(function (btn) {
             const isActive = btn.getAttribute("data-tab") === name;
