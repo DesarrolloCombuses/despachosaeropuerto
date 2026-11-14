@@ -1,0 +1,588 @@
+:root {
+  color-scheme: light;
+  --bg: #f2f7f3;
+  --panel: #ffffff;
+  --verde: #167a3d;
+  --verde-oscuro: #0e5a2c;
+  --verde-claro: #e6f4ea;
+  --text: #16241b;
+  --muted: #5c6b60;
+  --ok: #167a3d;
+  --err: #c0392b;
+  --aviso: #b26a00;
+  --aviso-claro: #fff3dc;
+  --borde: #dfe9e2;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Segoe UI", Arial, sans-serif;
+  min-height: 100vh;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.2rem 2.5rem;
+  background: var(--verde-oscuro);
+  border-bottom: 4px solid var(--verde);
+}
+
+header h1 {
+  margin: 0;
+  font-size: 2.4rem;
+  color: #ffffff;
+  line-height: 1.1;
+}
+
+header .sub {
+  color: #cfe9d8;
+  font-size: 1.15rem;
+  margin-top: 0.2rem;
+}
+
+#reloj {
+  font-size: 2.6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #ffffff;
+}
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 420px;
+  gap: 1.5rem;
+  padding: 1.5rem 2.5rem 2.5rem;
+  align-items: start;
+}
+
+@media (max-width: 1100px) {
+  .layout {
+    grid-template-columns: 1fr;
+    padding: 1rem;
+  }
+}
+
+main#contenido {
+  min-width: 0;
+  display: grid;
+  gap: 1.25rem;
+}
+
+/* ---- Aviso de datos viejos (sin internet o el programa que publica se detuvo) ---- */
+.aviso-viejo {
+  background: var(--aviso-claro);
+  color: var(--aviso);
+  border-bottom: 2px solid #f0c27a;
+  font-weight: 700;
+  font-size: 1.25rem;
+  text-align: center;
+  padding: 0.7rem 1rem;
+}
+
+/* ---- El próximo bus ---- */
+.proximo {
+  background: var(--verde-oscuro);
+  color: #ffffff;
+  border-radius: 18px;
+  padding: 1.3rem 1.8rem 1.5rem;
+  box-shadow: 0 6px 20px rgba(14, 90, 44, 0.25);
+}
+
+.proximo .estado {
+  color: #e6f4ea;
+  padding: 1rem 0;
+}
+
+.prox-etq {
+  font-size: 1.1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #bfe3cb;
+  font-weight: 600;
+}
+
+.prox-fila {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 1.6rem;
+  margin-top: 0.4rem;
+}
+
+.prox-num {
+  background: #ffffff;
+  color: var(--verde-oscuro);
+  font-size: 3.4rem;
+  font-weight: 800;
+  line-height: 1;
+  padding: 0.6rem 1.1rem;
+  border-radius: 14px;
+  font-variant-numeric: tabular-nums;
+}
+
+.prox-cuando {
+  font-size: 2.6rem;
+  line-height: 1.1;
+}
+
+.prox-cuando b {
+  font-size: 3.6rem;
+  font-weight: 800;
+}
+
+.prox-cuando .llegando {
+  font-size: 3rem;
+  font-weight: 800;
+  animation: latido 1.4s ease-in-out infinite;
+}
+
+.prox-hora {
+  font-size: 1.5rem;
+  color: #e6f4ea;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.prox-hora span {
+  font-size: 1.1rem;
+  color: #bfe3cb;
+}
+
+.prox-aviso {
+  margin-top: 0.8rem;
+  background: var(--aviso-claro);
+  color: var(--aviso);
+  font-weight: 600;
+  font-size: 1.1rem;
+  border-radius: 10px;
+  padding: 0.5rem 0.9rem;
+}
+
+@keyframes latido {
+  50% { opacity: 0.45; }
+}
+
+/* ---- La línea Aeropuerto -> Nutibara ---- */
+.linea-card {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 14px;
+  padding: 1rem 2.6rem 1.8rem;
+}
+
+.linea-titulo {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.linea {
+  position: relative;
+  height: 96px;
+  margin: 0.4rem 0.4rem 0;
+}
+
+.linea-via {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 26px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #b8d9c3, var(--verde));
+}
+
+.hito {
+  position: absolute;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 0.95rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.hito i {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 3px solid var(--verde-oscuro);
+  margin-bottom: 2px;
+}
+
+.hito-abajo span {
+  position: relative;
+  top: 1.2rem;
+}
+
+.hito-fin {
+  color: var(--verde-oscuro);
+  font-weight: 800;
+}
+
+.hito-fin i {
+  background: var(--verde-oscuro);
+}
+
+.ficha {
+  position: absolute;
+  transform: translateX(-50%);
+  background: var(--verde);
+  color: #ffffff;
+  font-weight: 800;
+  font-size: 1.05rem;
+  padding: 0.25rem 0.55rem;
+  border-radius: 8px;
+  border: 2px solid #ffffff;
+  box-shadow: 0 2px 6px rgba(14, 90, 44, 0.35);
+  font-variant-numeric: tabular-nums;
+}
+
+.ficha-llegando {
+  background: #0b8f3a;
+  animation: latido 1.4s ease-in-out infinite;
+}
+
+.ficha-gris {
+  background: #9aa59d;
+}
+
+/* ---- La lista ---- */
+.lista h2 {
+  margin: 0.3rem 0 0.7rem;
+  font-size: 1.6rem;
+  color: var(--verde-oscuro);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.contador {
+  background: var(--verde);
+  color: #ffffff;
+  font-size: 1.05rem;
+  font-weight: 700;
+  padding: 0.1rem 0.65rem;
+  border-radius: 999px;
+}
+
+.bus {
+  display: grid;
+  grid-template-columns: 7.5rem 10rem minmax(0, 1fr);
+  align-items: center;
+  gap: 1.2rem;
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-left: 6px solid var(--verde);
+  border-radius: 12px;
+  padding: 0.85rem 1.2rem;
+  margin-bottom: 0.7rem;
+}
+
+.bus.es-llegando {
+  background: var(--verde-claro);
+  border-left-color: #0b8f3a;
+}
+
+.bus.es-gris {
+  border-left-color: #b8c2bb;
+  opacity: 0.8;
+}
+
+.bus-num span {
+  display: block;
+  font-size: 2.3rem;
+  font-weight: 800;
+  color: var(--verde-oscuro);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.bus-num small {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.cuando-etq {
+  font-size: 0.95rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-height: 1.1em;
+}
+
+.grande {
+  font-size: 2.6rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.grande small {
+  font-size: 1.2rem;
+  font-weight: 700;
+}
+
+.grande.llegando {
+  font-size: 1.9rem;
+  color: #0b8f3a;
+  animation: latido 1.4s ease-in-out infinite;
+}
+
+.grande.gris {
+  color: #9aa59d;
+}
+
+.bus-detalle {
+  min-width: 0;
+  display: grid;
+  gap: 0.3rem;
+}
+
+.bus-detalle .hora {
+  font-size: 1.35rem;
+}
+
+.bus-detalle .rango {
+  color: var(--muted);
+  font-size: 1rem;
+  margin-left: 0.5rem;
+}
+
+.bus-detalle .donde {
+  color: var(--muted);
+  font-size: 1.05rem;
+}
+
+.barra {
+  height: 8px;
+  border-radius: 4px;
+  background: #e3ece6;
+  overflow: hidden;
+}
+
+.barra i {
+  display: block;
+  height: 100%;
+  background: var(--verde);
+  border-radius: 4px;
+}
+
+.chip {
+  display: inline-block;
+  background: #eef2ef;
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 0.15rem 0.7rem;
+  font-size: 1rem;
+  margin: 0.15rem 0.2rem 0.15rem 0;
+}
+
+.chip-ok {
+  background: var(--verde-claro);
+  color: var(--verde-oscuro);
+  font-weight: 700;
+}
+
+.chip-aviso {
+  background: var(--aviso-claro);
+  color: var(--aviso);
+  font-weight: 600;
+}
+
+.otros {
+  background: var(--panel);
+  border: 1px solid var(--borde);
+  border-radius: 12px;
+  padding: 0.8rem 1.2rem;
+  display: grid;
+  gap: 0.4rem;
+  font-size: 1.05rem;
+}
+
+.nota {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.estado {
+  text-align: center;
+  font-size: 1.4rem;
+  color: var(--muted);
+  padding: 2rem 0;
+  margin: 0;
+}
+
+.estado.error {
+  color: #ffd6d0;
+}
+
+/* ---- Mapa ---- */
+#mapa {
+  height: calc(100vh - 160px);
+  min-height: 420px;
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 4px 14px rgba(14, 90, 44, 0.15);
+  border: 1px solid var(--borde);
+  position: sticky;
+  top: 1.5rem;
+}
+
+@media (max-width: 1100px) {
+  #mapa {
+    height: 360px;
+    position: static;
+  }
+
+  .bus {
+    grid-template-columns: 5.5rem 8rem minmax(0, 1fr);
+    gap: 0.8rem;
+  }
+}
+
+/* celular: el número y los minutos arriba, el detalle debajo a todo lo ancho */
+@media (max-width: 640px) {
+  header {
+    padding: 0.8rem 1rem;
+  }
+
+  header h1 {
+    font-size: 1.5rem;
+  }
+
+  header .sub {
+    font-size: 0.9rem;
+  }
+
+  #reloj {
+    font-size: 1.5rem;
+  }
+
+  .proximo {
+    padding: 1rem 1.1rem;
+  }
+
+  .prox-num {
+    font-size: 2.4rem;
+  }
+
+  .prox-cuando,
+  .prox-cuando .llegando {
+    font-size: 1.8rem;
+  }
+
+  .prox-cuando b {
+    font-size: 2.4rem;
+  }
+
+  .prox-hora {
+    font-size: 1.15rem;
+  }
+
+  .linea-card {
+    padding: 0.8rem 1.6rem 1.8rem;
+  }
+
+  .hito {
+    font-size: 0.75rem;
+  }
+
+  .ficha {
+    font-size: 0.85rem;
+    padding: 0.15rem 0.4rem;
+  }
+
+  .bus {
+    grid-template-columns: auto 1fr;
+    gap: 0.4rem 1rem;
+    padding: 0.8rem 1rem;
+  }
+
+  .bus-detalle {
+    grid-column: 1 / -1;
+  }
+
+  .bus-num span {
+    font-size: 2rem;
+  }
+
+  .grande {
+    font-size: 2.1rem;
+  }
+
+  .bus-detalle .hora {
+    font-size: 1.15rem;
+  }
+}
+
+.pin-destino-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.pin-destino {
+  font-size: 1.8rem;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+}
+
+.etiqueta-destino {
+  background: var(--verde-oscuro);
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  padding: 0.2rem 0.5rem;
+  border-radius: 6px;
+  white-space: nowrap;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+}
+
+.pin-bus {
+  min-width: 40px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: 14px;
+  background: var(--verde);
+  color: #ffffff;
+  border: 2px solid #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.85rem;
+  box-shadow: 0 2px 6px rgba(14, 90, 44, 0.4);
+}
+
+.pin-bus.pin-llegando {
+  background: #0b8f3a;
+}
+
+.pin-bus.pin-gris {
+  background: #9aa59d;
+}
+
+.tip-hito {
+  font-weight: 700;
+  color: var(--verde-oscuro);
+}

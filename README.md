@@ -34,6 +34,20 @@ La misma app para los **gestores del aeropuerto**, con el mismo código (`window
 - **Se instala en el celular** como app aparte, "Gestores JMC", con ícono verde (`manifest-gestores.webmanifest`,
   `icons/gestores-*`). En Android sale el aviso "Instalar"; en el iPhone, la ayuda de "Compartir → Agregar a inicio".
 
+## Pantalla Nutibara (`nutibara/`)
+
+La pantalla del televisor de la **Terminal Nutibara**: los buses del 4503 (Aeropuerto → Túnel → Exposiciones →
+Nutibara) y **en cuánto llega cada uno**. Se abre el enlace `…/nutibara/` en el televisor; no se instala nada.
+
+- Cada 20 segundos le pide a Supabase la función `nutibara_pantalla()` (solo lee, sin sesión, **sin conductores**):
+  número del bus, placa, dónde está, hora del GPS y hora del despacho. Esos datos los publica el programa de enturnes.
+- **La hora de llegada la calcula el navegador** (`nutibara/tiempos.js`) con lo que tardaron de verdad los buses del
+  4503 a esa misma hora del día (`nutibara/tiempos_nutibara.json`, 699 viajes): ubica al bus sobre el recorrido, mira
+  cuántos km le faltan por la vía y busca cuánto se demoraron los que pasaron por ahí. Muestra lo normal y el rango.
+- De noche casi ningún 4503 sigue de San Diego a Nutibara: esos salen aparte, "Se quedan en San Diego".
+- Si los datos están viejos (el programa que publica se detuvo o el televisor no tiene internet) sale un aviso arriba.
+- Se recarga sola cada 6 horas para tomar los cambios de la página.
+
 ## Probar localmente
 
 Abre `aplicacion-aeropuerto.html` directamente en el navegador. **Pero hay una limitación**: los navegadores modernos no permiten `file://` para algunos features. Mejor levantar un servidor simple:
@@ -123,5 +137,6 @@ web/
 ├── js/excel-xlsx.js            Arma el Excel (.xlsx) del día en la versión de los gestores
 ├── css/style.css               Estilos
 ├── js/config.js                Credenciales Supabase
+├── nutibara/                   Pantalla del televisor de la Terminal Nutibara (en cuánto llega cada bus)
 └── js/main.js                  Lógica (carga + render + realtime)
 ```

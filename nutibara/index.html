@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Pantalla Nutibara</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <meta name="theme-color" content="#0e5a2c">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="nutibara.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Terminal Nutibara</h1>
+      <div class="sub">Buses que vienen del aeropuerto</div>
+    </div>
+    <span id="reloj"></span>
+  </header>
+
+  <div id="avisoViejo" class="aviso-viejo" hidden></div>
+
+  <div class="layout">
+    <main id="contenido">
+      <section id="proximo" class="proximo">
+        <p class="estado">Cargando información…</p>
+      </section>
+
+      <section class="linea-card" id="lineaCard" hidden>
+        <div class="linea-titulo">¿Por dónde van?</div>
+        <div class="linea" id="linea">
+          <div class="linea-via"></div>
+        </div>
+      </section>
+
+      <section id="lista" class="lista"></section>
+      <section id="otros" class="otros" hidden></section>
+      <p id="nota" class="nota"></p>
+    </main>
+
+    <aside id="mapa"></aside>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="../js/config.js"></script>
+  <script src="tiempos.js"></script>
+  <script src="pantalla.js"></script>
+</body>
+</html>
