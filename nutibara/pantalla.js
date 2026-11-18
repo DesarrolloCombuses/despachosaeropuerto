@@ -265,24 +265,40 @@
     render();
   }
 
+  // Recarga la página, pero solo si contesta: en un televisor sin nadie al lado, recargar sin internet la dejaría
+  // pegada en la página de error del navegador. Si no contesta, lo vuelve a intentar más tarde.
+  async function recargarSiSePuede(reintentoMs) {
+    try {
+      const r = await fetch('index.html', { cache: 'no-store' });
+      if (r.ok) {
+        location.reload();
+        return;
+      }
+    } catch (e) { /* sin internet */ }
+    setTimeout(() => recargarSiSePuede(reintentoMs), reintentoMs);
+  }
+
   async function iniciar() {
     actualizarReloj();
     setInterval(actualizarReloj, 1000);
     try {
-      const m = await (await fetch('tiempos_nutibara.json', { cache: 'no-cache' })).json();
-      T = new window.TiemposNutibara.Tiempos(m);
+      const r = await fetch('tiempos_nutibara.json', { cache: 'no-cache' });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      T = new window.TiemposNutibara.Tiempos(await r.json());
       RECORRIDO = T.paraLaPagina();
       dibujarRecorrido(RECORRIDO);
       document.getElementById('nota').textContent =
         `La hora de llegada sale de lo que tardaron los buses a esta misma hora del día en ${RECORRIDO.viajes} viajes ` +
         `(del ${RECORRIDO.desde} al ${RECORRIDO.hasta}). Se actualiza cada ${REFRESCO_MS / 1000} segundos.`;
     } catch (e) {
-      document.getElementById('proximo').innerHTML = '<p class="estado error">No se pudo cargar la tabla de tiempos. Recargue la página.</p>';
+      // pasa si el PC acaba de prender y todavía no hay internet: se vuelve a intentar sola
+      document.getElementById('proximo').innerHTML = '<p class="estado error">Esperando conexión a internet… se vuelve a intentar sola.</p>';
+      setTimeout(() => recargarSiSePuede(30000), 30000);
       return;
     }
     await cargarDatos();
     setInterval(cargarDatos, REFRESCO_MS);
-    setTimeout(() => location.reload(), RECARGAR_MS);
+    setTimeout(() => recargarSiSePuede(5 * 60000), RECARGAR_MS);
   }
 
   iniciar();
