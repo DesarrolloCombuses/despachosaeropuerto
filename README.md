@@ -31,6 +31,19 @@ La misma app para los **gestores del aeropuerto**, con el mismo código (`window
   con la hoja *Salidas* (una fila por bus que salió del aeropuerto: día, hora, bus, placa, itinerario, a dónde va,
   pasajeros, estado, quién y cuándo) y la hoja *Resumen* (totales por itinerario). Lo arma el celular
   (`js/excel-xlsx.js`, sin librerías) con lo que trae `aeropuerto_gestor_dia(p_dni, p_fecha)`.
+- **Con mala señal (v1.33.0)**. En el aeropuerto la app se ahogaba: pedía todo (flota, fila, direcciones, puntos) cada
+  15-60 s y escuchaba en vivo, y cada vez que se caía la conexión en vivo volvía a bajar la fila y la flota **cada 2 s**
+  (unos 70 pedidos por minuto, aun con la pantalla apagada). Ahora:
+  - El gestor **no escucha en vivo** y pide solo lo de la pestaña que está mirando: *Salidas* cada 30 s (2 pedidos por
+    minuto); *Mapa* la flota y los puntos cada 30 s, la fila y las direcciones cada 60 s (~8 por minuto); *Listas* la
+    fila cada 30 s. Con la pantalla apagada, nada. Un pedido que no contesta no se repite, y ninguno espera más de 20 s.
+  - **Los pasajeros se guardan aunque no haya señal**: al tocar Guardar el número queda en el celular; si no sale en
+    15 s queda *"Pendiente de enviar"* (en la fila y en un aviso azul arriba) y se manda solo a los 10 s, 20, 40...
+    (hasta cada 2 min), apenas vuelve la señal o al volver a la app, aunque se haya cerrado. Si la base lo rechaza
+    (por ejemplo, el despacho se canceló), el motivo sale en la misma ventana, como antes.
+  - Para todos (también el despachador): al reconectar la conexión en vivo, el aviso "CLOSED" del canal viejo ya no se
+    toma como una caída nueva (antes eso dejaba la app reconectando y bajando todo cada 2 s para siempre), y una carga
+    que sí funciona ya no pone la espera en 2 s mientras la conexión en vivo siga caída.
 - **Se instala en el celular** como app aparte, "Gestores JMC", con ícono verde (`manifest-gestores.webmanifest`,
   `icons/gestores-*`). En Android sale el aviso "Instalar"; en el iPhone, la ayuda de "Compartir → Agregar a inicio".
 

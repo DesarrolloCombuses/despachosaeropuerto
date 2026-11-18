@@ -135,7 +135,19 @@
     const LS_GESTOR = "aero_gestor_yo";
     let gestorYo = null; // { dni, nombre, cargo }
 
+    // v1.33.0: con la señal del aeropuerto un pedido se puede quedar colgado minutos ("Cargando...", "Guardando...").
+    // En la versión de los gestores ninguno espera más de 20 s: se corta y se vuelve a intentar después.
+    function fetchConLimite(url, opciones) {
+        opciones = opciones || {};
+        if (opciones.signal || typeof AbortController === "undefined") return window.fetch(url, opciones);
+        const ctrl = new AbortController();
+        const t = setTimeout(function () { ctrl.abort(); }, 20000);
+        return window.fetch(url, Object.assign({}, opciones, { signal: ctrl.signal }))
+            .finally(function () { clearTimeout(t); });
+    }
+
     const client = supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
+        global: GESTOR ? { fetch: fetchConLimite } : {},
         auth: GESTOR
             // nunca toma la sesión de un despachador que haya entrado en este mismo navegador
             ? { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: "aero-gestores-sin-sesion" }
@@ -224,6 +236,7 @@
                 map.invalidateSize();
             }, 50);
         }
+        if (GESTOR) { refrescarGestor({ tab: true }); return; } // v1.33.0: solo lo de esta pestaña
         // Cargar despachos cuando se entra a esa pestaña (si no se ha cargado todavía)
         if (name === "despachos" && !despachos.length && !despachosLoading) {
             cargarDespachos();
@@ -2028,27 +2041,26 @@
             });
             realizados = data || [];
             realizadosListo = true;
+            if (GESTOR) setConnection("ok");   // v1.33.0: sin conexión en vivo, el aviso de arriba sale de aquí
+            if (GESTOR && pendientes.length && !enviando) enviarPendientes();   // v1.33.0: volvió la señal
             renderRealizados();
             renderSubida();
             renderMap();
             if (activeTab === "vuelos" && vuelos.length) renderVuelos();   // v1.29.0: el bus que acaba de salir
         } catch (err) {
             console.warn("Error cargando realizados:", err);
+            if (GESTOR) {
+                setConnection(navigator.onLine ? "err" : "offline");
+                // v1.33.0: con la señal del aeropuerto una falla suelta no borra la lista que ya se ve
+                if (realizadosListo) return;
+            }
             const box = document.getElementById("realizadosBox");
             if (box) box.innerHTML = `<div class="loading">Error: ${escapeHtml(err.message || String(err))}</div>`;
         }
     }
 
     function suscribirRealizadosRealtime() {
-        if (GESTOR) {
-            // v1.30.0: sin sesión no llegan los cambios en vivo de esa tabla: se piden cada 30 s
-            if (!gestorRealizadosTimer) {
-                gestorRealizadosTimer = setInterval(function () {
-                    if (navigator.onLine && !document.hidden) cargarRealizados();
-                }, 30000);
-            }
-            return;
-        }
+        if (GESTOR) return; // v1.33.0: las salidas las pide refrescarGestor (cada 30 s en esa pestaña, 60 s en las otras)
         if (realizadosChannel) return;
         realizadosChannel = client
             .channel("despachos_realizados_changes")
@@ -2614,7 +2626,9 @@
             renderMap();
             if (activeTab === "vuelos" && vuelos.length) renderVuelos();   // v1.29.0: el turno de cada bus en la fila
             setLastUpdate();
-            reconnectDelay = 2000;
+            // v1.33.0: antes aquí la espera volvía a 2 s aunque la conexión en vivo siguiera caída, y la app se quedaba
+            // bajando todo cada 2 s. Ahora solo vuelve a 2 s cuando la conexión en vivo está bien.
+            if (realtimeChannel && realtimeChannel.state === "joined") reconnectDelay = 2000;
         } catch (err) {
             console.error("Error cargando datos:", err);
             const tablaBox = document.getElementById("tablaBox");
@@ -2641,16 +2655,24 @@
     }
 
     function suscribirRealtime() {
+        // v1.33.0: los gestores no escuchan en vivo: la fila la piden cada rato (refrescarGestor). Con la señal del
+        // aeropuerto la conexión en vivo se caía a cada rato y cada caída bajaba todo otra vez.
+        if (GESTOR) return;
         if (realtimeChannel) {
-            try { client.removeChannel(realtimeChannel); } catch (_) { /* noop */ }
+            // v1.33.0: primero se suelta. Al quitar el canal viejo, ese canal avisa "CLOSED"; antes ese aviso se tomaba
+            // como una caída nueva y la app reconectaba otra vez, para siempre, bajando todo cada 2 s.
+            const viejo = realtimeChannel;
             realtimeChannel = null;
+            try { client.removeChannel(viejo); } catch (_) { /* noop */ }
         }
-        realtimeChannel = client
+        const canal = client
             .channel("enturnamiento_changes")
             .on("postgres_changes", { event: "*", schema: "public", table: cfg.TABLA }, function () {
                 cargarInicial();
-            })
-            .subscribe(function (status) {
+            });
+        realtimeChannel = canal;
+        canal.subscribe(function (status) {
+                if (canal !== realtimeChannel) return;   // v1.33.0: lo que diga un canal ya soltado no cuenta
                 if (status === "SUBSCRIBED") {
                     setConnection("ok");
                     reconnectDelay = 2000;
@@ -2662,6 +2684,7 @@
     }
 
     function programarReintento() {
+        if (GESTOR) return; // v1.33.0: los gestores reintentan con refrescarGestor, sin repetir todo
         if (reconnectTimer) return;
         if (!navigator.onLine) return;
         const wait = reconnectDelay;
@@ -2678,6 +2701,7 @@
     // ============== Detección online/offline ==============
     window.addEventListener("online", function () {
         console.log("Conexión recuperada");
+        if (GESTOR) { refrescarGestor({ volver: true }); enviarPendientes(); return; } // v1.33.0
         setConnection("reconnecting");
         reconnectDelay = 2000;
         if (reconnectTimer) {
@@ -2695,6 +2719,10 @@
     });
 
     document.addEventListener("visibilitychange", function () {
+        if (GESTOR) {   // v1.33.0: al volver a la app, las salidas al día y lo pendiente se manda
+            if (document.visibilityState === "visible") { refrescarGestor({ volver: true }); enviarPendientes(); }
+            return;
+        }
         if (document.visibilityState === "visible" && navigator.onLine) {
             cargarInicial();
             cargarPosiciones();
@@ -2707,6 +2735,7 @@
 
     // Posición de toda la flota: no tiene canal Realtime propio, se refresca por polling.
     setInterval(function () {
+        if (GESTOR) return; // v1.33.0
         if (navigator.onLine) cargarPosiciones();
     }, 15000);
 
@@ -2736,6 +2765,7 @@
     // Auto-refresh de ocultos cada minuto (para que si otro operador oculta un
     // bus, también desaparezca de tu lista sin recargar la página)
     setInterval(function () {
+        if (GESTOR) return; // v1.33.0
         if (navigator.onLine) cargarOcultos().then(cargarInicial);
     }, 60000);
 
@@ -2743,6 +2773,7 @@
     // (el backend lo sincroniza cada 2 min, esto solo evita esperar hasta el
     // próximo cambio de pestaña para verlo).
     setInterval(function () {
+        if (GESTOR) return; // v1.33.0
         if ((activeTab === "mapa" || activeTab === "subida") && navigator.onLine) cargarResumenDirecciones();
         if (activeTab === "mapa" && navigator.onLine) cargarDireccionVehiculos();
     }, 30000);
@@ -2750,13 +2781,62 @@
     // La cuenta del programa (Patio azul, Subiendo, Bajando) cada 15 s mientras se ve el
     // mapa: el programa la renueva cada 30 s, así nunca se ve con más de 45 s de atraso.
     setInterval(function () {
+        if (GESTOR) return; // v1.33.0
         if (appStarted && activeTab === "mapa" && navigator.onLine) cargarPuntos();
     }, 15000);
 
     // Los internos de la flota casi no cambian: cada 5 minutos alcanza.
     setInterval(function () {
+        if (GESTOR) return; // v1.33.0
         if (appStarted && navigator.onLine) cargarInternosFlota();
     }, 300000);
+
+    // ---- v1.33.0: con la señal del aeropuerto, los gestores piden solo lo de la pestaña que están mirando ----
+    // Antes la app pedía todo (flota, fila, direcciones, puntos...) cada 15-60 s y escuchaba en vivo: unos 33 pedidos
+    // por minuto, y cuando se caía la conexión en vivo los repetía cada 2 s. Ahora, con la pantalla prendida:
+    //   Salidas (realizados): las salidas cada 30 s. En las otras pestañas, cada 60 s (para el aviso de las que faltan).
+    //   Mapa: la flota y la cuenta de los puntos cada 30 s; la fila y las direcciones cada 60 s; los internos cada 10 min.
+    //   Listas: la fila cada 30 s.
+    // Con la pantalla apagada o sin internet no se pide nada, y lo que todavía no ha contestado no se vuelve a pedir.
+    const GESTOR_CADA_MS = {
+        realizados: 30000, realizadosFuera: 60000,
+        posiciones: 30000, filas: 60000, filasListas: 30000, puntos: 30000, direcciones: 60000, flota: 10 * 60000,
+    };
+    const gestorPedido = {};     // qué -> cuándo se pidió por última vez
+    const gestorEnCurso = {};    // qué -> todavía no contesta
+
+    function pedirGestor(que, cada, cargar) {
+        if (gestorEnCurso[que]) return;
+        if (Date.now() - (gestorPedido[que] || 0) < cada) return;
+        gestorPedido[que] = Date.now();
+        gestorEnCurso[que] = true;
+        Promise.resolve()
+            .then(cargar)
+            .catch(function () { /* cada carga ya dice su error */ })
+            .then(function () { gestorEnCurso[que] = false; });
+    }
+
+    function refrescarGestor(opc) {
+        opc = opc || {};
+        if (!GESTOR || !appStarted || !gestorYo || !navigator.onLine) return;
+        if (document.hidden && !opc.inicio) return;
+        const enSalidas = activeTab === "realizados";
+        if (opc.volver || (opc.tab && enSalidas)) gestorPedido.realizados = 0;   // al volver o al abrir Salidas: ya
+        pedirGestor("realizados", enSalidas ? GESTOR_CADA_MS.realizados : GESTOR_CADA_MS.realizadosFuera, cargarRealizados);
+        if (activeTab === "mapa") {
+            pedirGestor("posiciones", GESTOR_CADA_MS.posiciones, cargarPosiciones);
+            pedirGestor("filas", GESTOR_CADA_MS.filas, function () { return cargarOcultos().then(cargarInicial); });
+            pedirGestor("puntos", GESTOR_CADA_MS.puntos, cargarPuntos);
+            pedirGestor("direcciones", GESTOR_CADA_MS.direcciones, function () {
+                return Promise.all([cargarResumenDirecciones(), cargarDireccionVehiculos()]);
+            });
+            pedirGestor("flota", GESTOR_CADA_MS.flota, cargarInternosFlota);
+        } else if (activeTab === "listas") {
+            pedirGestor("filas", GESTOR_CADA_MS.filasListas, function () { return cargarOcultos().then(cargarInicial); });
+        }
+    }
+
+    setInterval(function () { refrescarGestor(); }, 5000);
 
     function initDespachosControles() {
         const btn = document.getElementById("btnRefreshDespachos");
@@ -3438,8 +3518,8 @@
         const pagerPrev = document.getElementById("pagerPrev");
         const pagerNext = document.getElementById("pagerNext");
         const salidas = salidasDeHoy();
-        const faltan = salidas.filter(function (r) { return !pasajerosPuestos(r); });
-        const totalPas = salidas.reduce(function (s, r) { return s + (Number(r.pasajeros) || 0); }, 0);
+        const faltan = salidas.filter(function (r) { return !vistaPasajeros(r).puesto; });   // v1.33.0: lo pendiente cuenta
+        const totalPas = salidas.reduce(function (s, r) { return s + vistaPasajeros(r).n; }, 0);
         pintarAvisoFaltan(realizadosListo ? faltan : []);
 
         if (badge) {
@@ -3486,14 +3566,18 @@
         }
 
         const filas = paginaItems.map(function (r) {
-            const puesto = pasajerosPuestos(r);
-            const n = Number(r.pasajeros) || 0;
-            const quien = r.gestor ? `<span class="pg-quien">${escapeHtml(r.gestor)}</span>` : "";
+            const v = vistaPasajeros(r);   // v1.33.0: con lo pendiente de mandar
+            const puesto = v.puesto;
+            const n = v.n;
+            const quien = v.gestor ? `<span class="pg-quien">${escapeHtml(v.gestor)}</span>` : "";
             const itin = itinerarioDe(r);
             const dest = destinoDe(r);
+            const pend = v.pendiente
+                ? `<span class="pg-pend" title="Guardado en este celular; se envía solo cuando haya señal">${enviando ? "Enviando..." : "Pendiente de enviar"}</span>`
+                : "";
             const celda = !puesto ? '<span class="pg-falta">Faltan pasajeros</span>'
-                : n ? `<span class="pg-ok"><b>${n}</b> pasajero${n === 1 ? "" : "s"}</span>${quien}`
-                : `<span class="pg-ok pg-vacio">Salió vacío</span>${quien}`;
+                : n ? `<span class="pg-ok"><b>${n}</b> pasajero${n === 1 ? "" : "s"}</span>${pend || quien}`
+                : `<span class="pg-ok pg-vacio">Salió vacío</span>${pend || quien}`;
             return `
                 <tr class="${puesto ? "" : "pg-fila-falta"}">
                     <td class="hora">${escapeHtml(horaCorta(r.created_at))}</td>
@@ -3540,7 +3624,8 @@
         if (!r) return;
         pasSalida = r;
         const num = document.getElementById("pasNum");
-        num.value = String(pasajerosPuestos(r) ? (Number(r.pasajeros) || 0) : 1);
+        const v = vistaPasajeros(r);   // v1.33.0: si hay un número pendiente, ese
+        num.value = String(v.puesto ? v.n : 1);
         document.getElementById("pasError").hidden = true;
         pintarColocar();
         document.getElementById("pasModal").hidden = false;
@@ -3582,12 +3667,151 @@
         return /fetch|network|Failed|Load failed/i.test(m) ? "No hubo conexión: no se guardó. Intente otra vez." : m;
     }
 
+    // ---- v1.33.0: los pasajeros se guardan aunque la señal falle ----
+    // Al tocar Guardar el número queda guardado en el celular ("pendiente") y se manda enseguida. Si no sale (sin señal,
+    // o tarda más de 15 s) se vuelve a mandar solo: a los 10 s, 20, 40... hasta cada 2 min, y también apenas vuelve la
+    // señal o se vuelve a la app. Poner los pasajeros de una salida es "dejar este número": mandarlo dos veces no hace
+    // daño, así que reintentar es seguro. Los pendientes sobreviven si se cierra la app.
+    const LS_PENDIENTES = "aero_gestor_pendientes";
+    const ENVIO_LIMITE_MS = 15000;
+    let pendientes = leerPendientes();
+    let enviando = false;
+    let envioTimer = null;
+    let envioEspera = 10000;
+
+    function leerPendientes() {
+        try {
+            const l = JSON.parse(localStorage.getItem(LS_PENDIENTES) || "[]");
+            return Array.isArray(l) ? l.filter(function (p) { return p && p.despacho != null && p.dni; }) : [];
+        } catch (_) { return []; }
+    }
+    function guardarPendientes() {
+        try { localStorage.setItem(LS_PENDIENTES, JSON.stringify(pendientes)); } catch (_) { /* queda en memoria */ }
+    }
+    function pendienteDe(id) {
+        return pendientes.find(function (p) { return String(p.despacho) === String(id); }) || null;
+    }
+    function quitarPendiente(p) {
+        pendientes = pendientes.filter(function (x) { return x !== p; });
+        guardarPendientes();
+    }
+
+    // Lo que se muestra de una salida: si hay un número pendiente de mandar, ese.
+    function vistaPasajeros(r) {
+        const p = pendienteDe(r.id);
+        if (p) return { puesto: true, n: Number(p.pasajeros) || 0, gestor: p.nombre || "Usted", pendiente: true };
+        return { puesto: pasajerosPuestos(r), n: Number(r.pasajeros) || 0, gestor: r.gestor, pendiente: false };
+    }
+
+    function programarEnvio() {
+        if (envioTimer || !pendientes.length) return;
+        envioTimer = setTimeout(function () { envioTimer = null; enviarPendientes(); }, envioEspera);
+        envioEspera = Math.min(envioEspera * 2, 120000);
+    }
+
+    // Un intento. "ok" | "red" (sin señal / tardó / la base no contestó: se reintenta) | "rechazado" | "fuera"
+    async function enviarUno(p) {
+        const ctrl = typeof AbortController !== "undefined" ? new AbortController() : null;
+        const t = ctrl ? setTimeout(function () { ctrl.abort(); }, ENVIO_LIMITE_MS) : null;
+        try {
+            let q = client.rpc(RPC_GESTOR_PASAJEROS, {
+                p_dni: p.dni,
+                p_despacho: p.despacho,
+                p_pasajeros: Number(p.pasajeros),
+                p_dispositivo: "app aeropuerto gestores " + (cfg.APP_VERSION || ""),
+            });
+            if (ctrl && q.abortSignal) q = q.abortSignal(ctrl.signal);
+            const res = await q;
+            if (res.error) {
+                const st = Number(res.status) || 0;
+                const m = String(res.error.message || "");
+                if (!st || st >= 500 || st === 408 || st === 429 || /fetch|network|abort|timeout|57014/i.test(m)) {
+                    return { estado: "red" };
+                }
+                return { estado: "rechazado", mensaje: mensajeError(res.error) };
+            }
+            const data = res.data;
+            if (data && (data.no_es || data.no_gestor)) return { estado: "fuera" };
+            if (!data || !data.ok) return { estado: "rechazado", mensaje: (data && data.error) || "la base no lo aceptó" };
+            return { estado: "ok" };
+        } catch (_) {
+            return { estado: "red" };
+        } finally {
+            if (t) clearTimeout(t);
+        }
+    }
+
+    // Manda todo lo pendiente, en orden. Devuelve cómo le fue a cada uno: { despacho: "ok" | "red" | ... }
+    async function enviarPendientes() {
+        const resultado = {};
+        if (!GESTOR || enviando || !pendientes.length) return resultado;
+        if (envioTimer) { clearTimeout(envioTimer); envioTimer = null; }
+        if (!navigator.onLine) {
+            pendientes.forEach(function (p) { resultado[p.despacho] = "red"; });
+            programarEnvio();
+            pintarPendientes();
+            return resultado;
+        }
+        enviando = true;
+        pintarPendientes();
+        let sinSenal = false;
+        let algunoOk = false;
+        let salir = null;
+        try {
+            for (const p of pendientes.slice()) {
+                const r = await enviarUno(p);
+                if (pendienteDe(p.despacho) !== p) continue;   // mientras tanto le pusieron otro número: va en la próxima
+                resultado[p.despacho] = r.estado;
+                if (r.estado === "ok") {
+                    quitarPendiente(p);
+                    algunoOk = true;
+                    const s = realizados.find(function (x) { return String(x.id) === String(p.despacho); });
+                    if (s) { s.pasajeros = Number(p.pasajeros); s.gestor = p.nombre || "Usted"; }
+                } else if (r.estado === "rechazado") {
+                    quitarPendiente(p);
+                    showToast("err", `No se pudo poner los pasajeros del bus ${p.interno || ""}: ${r.mensaje}`);
+                } else if (r.estado === "fuera") {
+                    quitarPendiente(p);
+                    salir = "Su cédula ya no está habilitada para esta app.";
+                } else {
+                    sinSenal = true;
+                    break;      // sin señal: los demás esperan al próximo intento
+                }
+            }
+        } finally {
+            enviando = false;
+        }
+        if (sinSenal) programarEnvio(); else envioEspera = 10000;
+        pintarPendientes();
+        renderRealizados();
+        if (salir) { sacarGestor(salir); return resultado; }
+        if (algunoOk) cargarRealizados();
+        return resultado;
+    }
+
+    // El aviso de arriba: cuántos buses tienen pasajeros sin mandar todavía.
+    function pintarPendientes() {
+        const aviso = document.getElementById("avisoPendientes");
+        if (!aviso) return;
+        aviso.hidden = !pendientes.length;
+        if (!pendientes.length) return;
+        const buses = pendientes.slice(0, 4).map(function (p) {
+            return `<span class="ap-bus"><b>${escapeHtml(p.interno || "")}</b> ${Number(p.pasajeros) || 0}</span>`;
+        }).join(" ") + (pendientes.length > 4 ? ` <span class="af-mas">y ${pendientes.length - 4} más</span>` : "");
+        aviso.querySelector(".ap-txt").innerHTML = enviando
+            ? `<strong>Enviando...</strong> ${buses}`
+            : `<strong>Sin señal: ${pendientes.length === 1 ? "1 bus" : pendientes.length + " buses"} con pasajeros sin enviar.</strong> ` +
+              `Quedaron guardados en este celular y se envían solos cuando vuelva la señal. ${buses}`;
+        const btn = document.getElementById("avisoPendientesEnviar");
+        if (btn) btn.disabled = enviando;
+    }
+
     async function guardarColocar() {
         const r = pasSalida;
         const err = document.getElementById("pasError");
         const btn = document.getElementById("pasGuardar");
         err.hidden = true;
-        if (!r) return;
+        if (!r || btn.disabled) return;
         const texto = String(document.getElementById("pasNum").value || "").trim();
         const n = /^[0-9]{1,2}$/.test(texto) ? parseInt(texto, 10) : NaN;
         if (!Number.isFinite(n) || n < 0 || n > CUPO_BUS) {
@@ -3595,36 +3819,47 @@
             err.hidden = false;
             return;
         }
-        if (!navigator.onLine) {
-            err.textContent = "Sin internet: no se guardó. Intente cuando vuelva la señal.";
-            err.hidden = false;
-            return;
-        }
+        // v1.33.0: el número queda guardado en el celular desde ya; si no sale, se manda solo después
+        const p = { despacho: r.id, pasajeros: n, interno: r.interno || "", dni: gestorYo.dni,
+                    nombre: gestorYo.nombre || "Usted", puesto_en: Date.now() };
+        pendientes = pendientes.filter(function (x) { return String(x.despacho) !== String(r.id); }).concat([p]);
+        guardarPendientes();
+        const bus = r.interno;
         btn.disabled = true;
         btn.textContent = "Guardando...";
-        try {
-            const { data, error } = await client.rpc(RPC_GESTOR_PASAJEROS, {
-                p_dni: gestorYo.dni,
-                p_despacho: r.id,
-                p_pasajeros: n,
-                p_dispositivo: "app aeropuerto gestores " + (cfg.APP_VERSION || ""),
-            });
-            if (error) throw error;
-            if (!data || !data.ok) throw new Error("No se guardó. Intente otra vez.");
+        // Con la ventana abierta se intenta una vez (máximo 15 s): si la base no lo acepta, el motivo sale aquí mismo.
+        const res = navigator.onLine ? await enviarUno(p) : { estado: "red" };
+        btn.textContent = "Guardar";
+        btn.disabled = false;
+        if (res.estado === "rechazado") {
+            if (pendienteDe(r.id) === p) quitarPendiente(p);
+            err.textContent = res.mensaje;
+            err.hidden = false;
+            renderRealizados();
+            return;
+        }
+        if (res.estado === "fuera") {
+            if (pendienteDe(r.id) === p) quitarPendiente(p);
+            sacarGestor("Su cédula ya no está habilitada para esta app.");
+            return;
+        }
+        if (pasSalida === r) cerrarColocar();
+        if (res.estado === "ok") {
+            if (pendienteDe(r.id) === p) quitarPendiente(p);
             r.pasajeros = n;
-            r.gestor = gestorYo.nombre || "Usted";
-            const bus = r.interno;
-            cerrarColocar();
+            r.gestor = p.nombre;
             showToast("ok", n ? `Listo: ${n} pasajero${n === 1 ? "" : "s"} en el bus ${bus}` : `Listo: el bus ${bus} salió vacío`);
             renderRealizados();
+            pintarPendientes();
             cargarRealizados();
-        } catch (e) {
-            err.textContent = mensajeError(e);
-            err.hidden = false;
-        } finally {
-            btn.textContent = "Guardar";
-            btn.disabled = false;
+            if (pendientes.length) enviarPendientes();   // había otros esperando: también salen
+            return;
         }
+        // Sin señal: queda pendiente en el celular y se manda solo
+        showToast("err", `Sin señal: los pasajeros del bus ${bus} quedaron guardados en el celular y se envían solos.`);
+        renderRealizados();
+        pintarPendientes();
+        programarEnvio();
     }
 
 
@@ -3868,10 +4103,10 @@
             realizadosPage = 1;
             setActiveTab("realizados");
         });
-        // v1.31.0: ya no se piden los vuelos; al volver a la app, la lista de salidas al día
-        document.addEventListener("visibilitychange", function () {
-            if (!document.hidden && navigator.onLine) cargarRealizados();
-        });
+        // v1.33.0: al volver a la app ya no se pide aquí (lo hace refrescarGestor con lo pendiente)
+        const btnEnviar = document.getElementById("avisoPendientesEnviar");
+        if (btnEnviar) btnEnviar.addEventListener("click", function () { envioEspera = 10000; enviarPendientes(); });
+        pintarPendientes();
     }
 
     // ---- Instalar en el celular (v1.30.0) ----
@@ -3986,7 +4221,9 @@
         btnLogout.addEventListener("click", async function () {
             const ok = await mostrarConfirmacion({
                 titulo: "Salir",
-                mensaje: "La app vuelve a pedir la cédula. Lo que ya anotó queda guardado.",
+                mensaje: "La app vuelve a pedir la cédula. Lo que ya anotó queda guardado." + (pendientes.length
+                    ? " Hay " + pendientes.length + " sin enviar por falta de señal: se envían solos cuando vuelva a entrar."
+                    : ""),
                 textoConfirmar: "Salir",
                 textoCancelar: "Seguir",
                 tipo: "warn",
@@ -4131,7 +4368,11 @@
         initRealizadosControles();
         initVuelosControles();
         initTurnosControles();
-        if (navigator.onLine) {
+        if (GESTOR) {   // v1.33.0: solo lo de la pestaña en que está, y lo pendiente de antes
+            refrescarGestor({ inicio: true });
+            enviarPendientes();
+            if (!navigator.onLine) setConnection("offline");
+        } else if (navigator.onLine) {
             cargarOcultos().then(cargarInicial); // ocultos primero, para no parpadear un bus ya oculto
             cargarPosiciones();
             suscribirRealtime();
